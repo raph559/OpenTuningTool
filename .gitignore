@@ -1,48 +1,55 @@
-# Prerequisites
-*.d
+# .NET / C#
+# Build outputs
+[Bb]in/
+[Oo]bj/
+out/
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Linker files
-*.ilk
-
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# debug information files
-*.dwo
-
-# .NET / C# build artifacts
-bin/
-obj/
+# User-specific files
 *.user
-*.cache
+*.rsuser
+*.suo
+*.userosscache
+*.sln.docstates
+
+# IDE/editor folders
 .vs/
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Rider / ReSharper
+.idea/
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+
+# Logs
+*.log
+
+# NuGet
+*.nupkg
+*.snupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+!**/[Pp]ackages/repositories.config
+.nuget/packages/
+
+# Test results and coverage
+[Tt]est[Rr]esult*/
+[Tt]est[Rr]esults/
+*.trx
+*.coverage
+*.coveragexml
+coverage/
+
+# Publish output
+publish/
+
+# Generated files
+Generated/
+
+# OS files
+.DS_Store
+Thumbs.db
