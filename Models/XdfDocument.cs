@@ -13,7 +13,5 @@ class XdfDocument
 	internal void AddTable(XdfTable table)
 	{
 		if (table == null) return;
-
-		if (table.)
 	}
 }
