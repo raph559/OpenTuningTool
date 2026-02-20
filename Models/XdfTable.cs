@@ -9,6 +9,6 @@ public class XdfTable:XdfObject
 	public XdfTable(int uniqueId, string title, string? description) 
 		: base(uniqueId, title, description)
 	{
-		
+		// TODO : implement constructor with axis as parameters, and make them immutable (readonly properties)
 	}
 }

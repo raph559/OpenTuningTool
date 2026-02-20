@@ -22,21 +22,29 @@ public class XdfParser{
 		return xdf;
 	}
 
-	public XdfTable ParseTable(XElement rawTable)
+	private (int uniqueId, string title, string? description) ParseCommonFields(XElement element)
 	{
 		// Get and check validity of uniqueid
-		string? uniqueIdStr = rawTable.Attribute("uniqueid")?.Value;
+		string? uniqueIdStr = element.Attribute("uniqueid")?.Value;
 		if (uniqueIdStr == null)
 			throw new NullReferenceException("extracted uniqueid cannot be null.");
 		int uniqueId = Convert.ToInt32(uniqueIdStr, 16);
 		
 		// Get and check validity of title
-		string? title = rawTable.Element("title")?.Value;
+		string? title = element.Element("title")?.Value;
 		if (title == null)
 			throw new NullReferenceException("extracted title cannot be null.");
 
 		// Get description (can be null) 
-		string? description = rawTable.Element("description")?.Value;
+		string? description = element.Element("description")?.Value;
+
+		return (uniqueId, title, description);
+	}
+
+	public XdfTable ParseTable(XElement rawTable)
+	{
+		// Parse common fields (uniqueid, title, description) and check their validity
+		(int uniqueId, string title, string? description) = ParseCommonFields(rawTable);
 
 		XdfTable table = new XdfTable(uniqueId, title, description);
 		return table;
@@ -44,19 +52,8 @@ public class XdfParser{
 
 	public XdfConstant ParseConstant(XElement rawConstant)
 	{
-		// Get and check validity of uniqueid
-		string? uniqueIdStr = rawConstant.Attribute("uniqueid")?.Value;
-		if (uniqueIdStr == null)
-			throw new NullReferenceException("extracted uniqueid cannot be null.");
-		int uniqueId = Convert.ToInt32(uniqueIdStr, 16);
-		
-		// Get and check validity of title
-		string? title = rawConstant.Element("title")?.Value;
-		if (title == null)
-			throw new NullReferenceException("extracted title cannot be null.");
-
-		// Get description (can be null) 
-		string? description = rawConstant.Element("description")?.Value;
+		// Parse common fields (uniqueid, title, description) and check their validity
+		(int uniqueId, string title, string? description) = ParseCommonFields(rawConstant);
 
 		// Get and check validity of address
 		string? addressStr = rawConstant.Element("EMBEDDEDDATA")?.Attribute("mmedaddress")?.Value;
