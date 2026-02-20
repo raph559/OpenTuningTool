@@ -6,6 +6,9 @@ public class XdfTable:XdfObject
 	public XdfAxis? YAxis { get; internal set; }
 	public XdfTableData? ZAxis { get; internal set; }
 
-	public XdfTable(int uniqueId, string title, string description) 
-		: base(uniqueId, title, description){}
+	public XdfTable(int uniqueId, string title, string? description) 
+		: base(uniqueId, title, description)
+	{
+		
+	}
 }

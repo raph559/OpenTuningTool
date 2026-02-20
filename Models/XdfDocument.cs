@@ -1,41 +1,49 @@
 namespace OpenTuningTool.Models;
 
-class XdfDocument
+public class XdfDocument
 {
 	private readonly List<XdfTable> _tables;
 	private readonly List<XdfConstant> _constants;
-	private readonly Dictionary<int, XdfObject> _objectsById;
+	private readonly Dictionary<int, List<XdfObject>> _objectsById;
 
 	public IReadOnlyList<XdfTable> Tables => _tables;
 	public IReadOnlyList<XdfConstant> Constants => _constants;
-	public IReadOnlyDictionary<int, XdfObject> Objects => _objectsById;
+	public IReadOnlyDictionary<int, List<XdfObject>> Objects => _objectsById;
 
 	public XdfDocument()
 	{
 		_tables = new List<XdfTable>();
 		_constants = new List<XdfConstant>();
-		_objectsById = new Dictionary<int, XdfObject>();
+		_objectsById = new Dictionary<int, List<XdfObject>>();
+	}
+
+	internal void AddObjectInDictionnary(XdfObject obj)
+	{
+		// Try to get existing list for this ID
+		if (!_objectsById.TryGetValue(obj.UniqueId, out List<XdfObject>? list))
+		{
+			// If it doesnt exist, create and add to the dictionary
+			list = new List<XdfObject>();
+			_objectsById.Add(obj.UniqueId, list);
+		}
+
+		// The list exists, so just add the item
+		list.Add(obj);
 	}
 
 	internal void AddTable(XdfTable table)
 	{
 		ArgumentNullException.ThrowIfNull(table);
-
-		if (_objectsById.ContainsKey(table.UniqueId)) 
-			throw new InvalidOperationException("An object with this ID already exists.");
-
 		_tables.Add(table);
-		_objectsById.Add(table.UniqueId, table);
+		
+		AddObjectInDictionnary(table);
 	}
 
 	internal void AddConstant(XdfConstant constant)
 	{
 		ArgumentNullException.ThrowIfNull(constant);
-
-		if (_objectsById.ContainsKey(constant.UniqueId))
-			throw new InvalidOperationException("An object with this ID already exists.");
-
 		_constants.Add(constant);
-		_objectsById.Add(constant.UniqueId, constant);
+
+		AddObjectInDictionnary(constant);
 	}
 }
