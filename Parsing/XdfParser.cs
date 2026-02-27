@@ -7,118 +7,122 @@ namespace OpenTuningTool.Parsing;
 
 public class XdfParser
 {
-    public XdfDocument Parse(string filePath)
-    {
-        XDocument doc = XDocument.Load(filePath);
-        XdfDocument xdf = new XdfDocument();
+	public XdfDocument Parse(string filePath)
+	{
+		XDocument doc = XDocument.Load(filePath);
+		XdfDocument xdf = new XdfDocument();
 
-        // Parse tables
-        IEnumerable<XElement> rawTables = doc.Descendants("XDFTABLE");
-        foreach (XElement rawTable in rawTables)
-            xdf.AddTable(ParseTable(rawTable));
+		// Parse tables
+		IEnumerable<XElement> rawTables = doc.Descendants("XDFTABLE");
+		foreach (XElement rawTable in rawTables)
+			xdf.AddTable(ParseTable(rawTable));
 
-        // Parse constants
-        IEnumerable<XElement> rawConstants = doc.Descendants("XDFCONSTANT");
-        foreach (XElement rawConstant in rawConstants)
-            xdf.AddConstant(ParseConstant(rawConstant));
-            
-        return xdf;
-    }
+		// Parse constants
+		IEnumerable<XElement> rawConstants = doc.Descendants("XDFCONSTANT");
+		foreach (XElement rawConstant in rawConstants)
+			xdf.AddConstant(ParseConstant(rawConstant));
 
-    private (int uniqueId, string title, string? description) ParseCommonFields(XElement element)
-    {
-        // UniqueID
-        int uniqueId = element.ParseIntAttribute("uniqueid");
+		return xdf;
+	}
 
-        // Title
-        XElement? titleElement = element.Element("title");
-        if (titleElement == null) throw new InvalidDataException("A title element cannot be null.");
-        string title = titleElement.ParseStringElement();
+	private (int uniqueId, string title, string? description) ParseCommonFields(XElement element)
+	{
+		// UniqueID
+		int uniqueId = element.ParseIntAttribute("uniqueid");
 
-        // Get description (can be null so just take the value) 
-        string? description = element.Element("description")?.Value;
+		// Title
+		XElement? titleElement = element.Element("title");
+		if (titleElement == null) throw new InvalidDataException("A title element cannot be null.");
+		string title = titleElement.ParseStringElement();
 
-        return (uniqueId, title, description);
-    }
+		// Get description (can be null so just take the value) 
+		string? description = element.Element("description")?.Value;
 
-    public XdfAxis ParseAxis(XElement rawAxis)
-    {
-        // ID
-        string id = rawAxis.ParseStringAttribute("id");
+		return (uniqueId, title, description);
+	}
 
-        // Index Count
-        XElement? indexCountElement = rawAxis.Element("indexcount");
-        if (indexCountElement == null) throw new InvalidDataException("An axis index count cannot be null.");
-        int indexCount = indexCountElement.ParseIntElement();
+	public XdfAxis ParseAxis(XElement rawAxis)
+	{
+		// ID
+		string id = rawAxis.ParseStringAttribute("id");
 
-        // Embedded Data
-        XElement? embeddeddata = rawAxis.Element("EMBEDDEDDATA");
-        if (embeddeddata == null)
-        {
-            string parentTableTitle = rawAxis.Ancestors("XDFTABLE").FirstOrDefault()?.Element("title")?.Value ?? "unknown table";
-            throw new InvalidDataException($"EMBEDDEDDATA element is missing in axis '{id}' of '{parentTableTitle}' table.");
-        }
+		// Index Count
+		XElement? indexCountElement = rawAxis.Element("indexcount");
+		if (indexCountElement == null) throw new InvalidDataException("An axis index count cannot be null.");
+		int indexCount = indexCountElement.ParseIntElement();
 
-        // Others
-        int elementSizeBits = embeddeddata.ParseIntAttribute("mmedelementsizebits");
-        int majorStrideBits = embeddeddata.ParseIntAttribute("mmedmajorstridebits");
-        int minorStrideBits = embeddeddata.ParseIntAttribute("mmedminorstridebits");
-        
-        int? address = embeddeddata.ParseNullableIntAttribute("mmedaddress");
+		// Embedded Data
+		XElement? embeddeddata = rawAxis.Element("EMBEDDEDDATA");
+		if (embeddeddata == null)
+		{
+			string parentTableTitle = rawAxis.Ancestors("XDFTABLE").FirstOrDefault()?.Element("title")?.Value ?? "unknown table";
+			throw new InvalidDataException($"EMBEDDEDDATA element is missing in axis '{id}' of '{parentTableTitle}' table.");
+		}
 
-        return new XdfAxis(Convert.ToChar(id), indexCount, address, elementSizeBits, majorStrideBits, minorStrideBits);
-    }
+		// Others
+		int elementSizeBits = embeddeddata.ParseIntAttribute("mmedelementsizebits");
+		int majorStrideBits = embeddeddata.ParseIntAttribute("mmedmajorstridebits");
+		int minorStrideBits = embeddeddata.ParseIntAttribute("mmedminorstridebits");
 
-    public XdfTableData ParseTableData(XElement rawTableData)
-    {
-        XElement? embeddeddata = rawTableData.Element("EMBEDDEDDATA");
-        string parentTableTitle = rawTableData.Ancestors("XDFTABLE").FirstOrDefault()?.Element("title")?.Value ?? "unknown table";
-        if (embeddeddata == null) throw new InvalidDataException($"EMBEDDEDDATA element is missing in Z axis of '{parentTableTitle}' table.");
+		int? address = embeddeddata.ParseNullableIntAttribute("mmedaddress");
 
-        int address = embeddeddata.ParseIntAttribute("mmedaddress");
-        int rowCount = embeddeddata.ParseIntAttribute("mmedrowcount");
-        int colCount = embeddeddata.ParseIntAttribute("mmedcolcount");
-        int elementSizeBits = embeddeddata.ParseIntAttribute("mmedelementsizebits");
-        int majorStrideBits = embeddeddata.ParseIntAttribute("mmedmajorstridebits");
-        int minorStrideBits = embeddeddata.ParseIntAttribute("mmedminorstridebits");
+		return new XdfAxis(Convert.ToChar(id), indexCount, address, elementSizeBits, majorStrideBits, minorStrideBits);
+	}
 
-        return new XdfTableData(address, rowCount, colCount, elementSizeBits, majorStrideBits, minorStrideBits);
-    }
+	public XdfTableData ParseTableData(XElement rawTableData)
+	{
+		// Embedded Data
+		XElement? embeddeddata = rawTableData.Element("EMBEDDEDDATA");
+		string parentTableTitle = rawTableData.Ancestors("XDFTABLE").FirstOrDefault()?.Element("title")?.Value ?? "unknown table";
+		if (embeddeddata == null) throw new InvalidDataException($"EMBEDDEDDATA element is missing in Z axis of '{parentTableTitle}' table.");
 
-    public XdfTable ParseTable(XElement rawTable)
-    {
-        // Parse common fields (uniqueid, title, description) and check their validity
-        (int uniqueId, string title, string? description) = ParseCommonFields(rawTable);
+		// Required fields
+		int address = embeddeddata.ParseIntAttribute("mmedaddress");
+		int elementSizeBits = embeddeddata.ParseIntAttribute("mmedelementsizebits");
 
-        // Parse axes and check their validity
-        IEnumerable<XElement> axes = rawTable.Descendants("XDFAXIS");
+		// Optional fields (defaulting to 1 for rows/cols, and 0 for strides)
+		int rowCount = embeddeddata.ParseNullableIntAttribute("mmedrowcount") ?? 1;
+		int colCount = embeddeddata.ParseNullableIntAttribute("mmedcolcount") ?? 1;
+		int majorStrideBits = embeddeddata.ParseNullableIntAttribute("mmedmajorstridebits") ?? 0;
+		int minorStrideBits = embeddeddata.ParseNullableIntAttribute("mmedminorstridebits") ?? 0;
 
-        XElement? rawXAxis = axes.FirstOrDefault(axis => axis.Attribute("id")?.Value == "x");
-        if (rawXAxis == null) throw new InvalidDataException("A table X axis cannot be null.");
-        XdfAxis xAxis = ParseAxis(rawXAxis);
+		return new XdfTableData(address, rowCount, colCount, elementSizeBits, majorStrideBits, minorStrideBits);
+	}
 
-        XElement? rawYAxis = axes.FirstOrDefault(axis => axis.Attribute("id")?.Value == "y");
-        if (rawYAxis == null) throw new InvalidDataException("A table Y axis cannot be null.");
-        XdfAxis yAxis = ParseAxis(rawYAxis);
+	public XdfTable ParseTable(XElement rawTable)
+	{
+		// Parse common fields (uniqueid, title, description) and check their validity
+		(int uniqueId, string title, string? description) = ParseCommonFields(rawTable);
 
-        XElement? rawTableData = axes.FirstOrDefault(axis => axis.Attribute("id")?.Value == "z");
-        if (rawTableData == null) throw new InvalidDataException("A table's TableData (Z axis) cannot be null.");
-        XdfTableData tableData = ParseTableData(rawTableData);
+		// Parse axes and check their validity
+		IEnumerable<XElement> axes = rawTable.Descendants("XDFAXIS");
 
-        return new XdfTable(uniqueId, title, description, xAxis, yAxis, tableData);
-    }
+		XElement? rawXAxis = axes.FirstOrDefault(axis => axis.Attribute("id")?.Value == "x");
+		if (rawXAxis == null) throw new InvalidDataException("A table X axis cannot be null.");
+		XdfAxis xAxis = ParseAxis(rawXAxis);
 
-    public XdfConstant ParseConstant(XElement rawConstant)
-    {
-        // Parse common fields (uniqueid, title, description) and check their validity
-        (int uniqueId, string title, string? description) = ParseCommonFields(rawConstant);
+		XElement? rawYAxis = axes.FirstOrDefault(axis => axis.Attribute("id")?.Value == "y");
+		if (rawYAxis == null) throw new InvalidDataException("A table Y axis cannot be null.");
+		XdfAxis yAxis = ParseAxis(rawYAxis);
 
-        XElement? embeddeddata = rawConstant.Element("EMBEDDEDDATA");
-        if (embeddeddata == null) throw new InvalidDataException($"EMBEDDEDDATA element is missing in the constant '{title}'.");
+		XElement? rawTableData = axes.FirstOrDefault(axis => axis.Attribute("id")?.Value == "z");
+		if (rawTableData == null) throw new InvalidDataException("A table's TableData (Z axis) cannot be null.");
+		XdfTableData tableData = ParseTableData(rawTableData);
 
-        int address = embeddeddata.ParseIntAttribute("mmedaddress");
-        int elementSizeBits = embeddeddata.ParseIntAttribute("mmedelementsizebits");
+		return new XdfTable(uniqueId, title, description, xAxis, yAxis, tableData);
+	}
 
-        return new XdfConstant(uniqueId, title, description, address, elementSizeBits);
-    }
+	public XdfConstant ParseConstant(XElement rawConstant)
+	{
+		// Parse common fields (uniqueid, title, description) and check their validity
+		(int uniqueId, string title, string? description) = ParseCommonFields(rawConstant);
+
+		XElement? embeddeddata = rawConstant.Element("EMBEDDEDDATA");
+		if (embeddeddata == null) throw new InvalidDataException($"EMBEDDEDDATA element is missing in the constant '{title}'.");
+
+		int address = embeddeddata.ParseIntAttribute("mmedaddress");
+		int elementSizeBits = embeddeddata.ParseIntAttribute("mmedelementsizebits");
+
+		return new XdfConstant(uniqueId, title, description, address, elementSizeBits);
+	}
 }

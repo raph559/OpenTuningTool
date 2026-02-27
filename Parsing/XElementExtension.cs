@@ -39,50 +39,98 @@ public static class XElementExtension
 		if (string.IsNullOrWhiteSpace(valueStr))
 		{
 			string contextName = "an unknown element";
+
+			// Check if inside a table
 			XElement? parentTable = element.Ancestors("XDFTABLE").FirstOrDefault();
 			if (parentTable != null)
 			{
-				contextName = parentTable.Element("title")?.Value ?? contextName;
+				string tableTitle = parentTable.Element("title")?.Value ?? "unknown table";
+
+				// Check if inside an axis within this table
+				XElement? parentAxis = element.Ancestors("XDFAXIS").FirstOrDefault();
+				if (parentAxis != null)
+				{
+					string axisId = parentAxis.Attribute("id")?.Value ?? "unknown";
+					contextName = $"axis '{axisId}' of table '{tableTitle}'";
+				}
+				else
+				{
+					contextName = $"table '{tableTitle}'";
+				}
+			}
+			else
+			{
+				// Check if inside a constant
+				XElement? parentConstant = element.Ancestors("XDFCONSTANT").FirstOrDefault();
+				if (parentConstant != null)
+				{
+					string constantTitle = parentConstant.Element("title")?.Value ?? "unknown constant";
+					contextName = $"constant '{constantTitle}'";
+				}
 			}
 
-			throw new InvalidDataException($"{targetName} could not be found or is empty in '{contextName}'.");
+			throw new InvalidDataException($"{targetName} could not be found or is empty in {contextName}.");
 		}
 
 		// Auto convert from hex if needed
 		return valueStr.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? Convert.ToInt32(valueStr, 16) : Convert.ToInt32(valueStr);
 	}
 
-    public static string ParseStringAttribute(this XElement element, string attributeName)
-    {
-        string? valueStr = element.Attribute(attributeName)?.Value;
-        string targetName = $"The attribute '{attributeName}'";
+	public static string ParseStringAttribute(this XElement element, string attributeName)
+	{
+		string? valueStr = element.Attribute(attributeName)?.Value;
+		string targetName = $"The attribute '{attributeName}'";
 
-        return ProcessString(element, valueStr, targetName);
-    }
+		return ProcessString(element, valueStr, targetName);
+	}
 
-    public static string ParseStringElement(this XElement element)
-    {
-        string? valueStr = element.Value;
-        string targetName = $"The value of <{element.Name.LocalName}>";
+	public static string ParseStringElement(this XElement element)
+	{
+		string? valueStr = element.Value;
+		string targetName = $"The value of <{element.Name.LocalName}>";
 
-        return ProcessString(element, valueStr, targetName);
-    }
+		return ProcessString(element, valueStr, targetName);
+	}
 
-    // Error handling for strings
-    private static string ProcessString(XElement element, string? valueStr, string targetName)
-    {
-        if (string.IsNullOrWhiteSpace(valueStr))
-        {
-            string contextName = "an unknown element";
-            XElement? parentTable = element.Ancestors("XDFTABLE").FirstOrDefault();
-            if (parentTable != null)
-            {
-                contextName = parentTable.Element("title")?.Value ?? contextName;
-            }
+	// Error handling for strings
+	private static string ProcessString(XElement element, string? valueStr, string targetName)
+	{
+		if (string.IsNullOrWhiteSpace(valueStr))
+		{
+			string contextName = "an unknown element";
 
-            throw new InvalidDataException($"{targetName} could not be found or is empty in '{contextName}'.");
-        }
+			// Check if inside a table
+			XElement? parentTable = element.Ancestors("XDFTABLE").FirstOrDefault();
+			if (parentTable != null)
+			{
+				string tableTitle = parentTable.Element("title")?.Value ?? "unknown table";
 
-        return valueStr;
-    }
+				// Check if inside an axis within this table
+				XElement? parentAxis = element.Ancestors("XDFAXIS").FirstOrDefault();
+				if (parentAxis != null)
+				{
+					string axisId = parentAxis.Attribute("id")?.Value ?? "unknown";
+					contextName = $"axis '{axisId}' of table '{tableTitle}'";
+				}
+				else
+				{
+					contextName = $"table '{tableTitle}'";
+				}
+			}
+			else
+			{
+				// Check if inside a constant
+				XElement? parentConstant = element.Ancestors("XDFCONSTANT").FirstOrDefault();
+				if (parentConstant != null)
+				{
+					string constantTitle = parentConstant.Element("title")?.Value ?? "unknown constant";
+					contextName = $"constant '{constantTitle}'";
+				}
+			}
+
+			throw new InvalidDataException($"{targetName} could not be found or is empty in {contextName}.");
+		}
+
+		return valueStr;
+	}
 }
