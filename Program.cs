@@ -1,16 +1,26 @@
 namespace OpenTuningTool;
 
-static class Program
+internal static class Program
 {
-    /// <summary>
-    ///  The main entry point for the application.
-    /// </summary>
     [STAThread]
-    static void Main()
+    private static void Main()
     {
-        // To customize application configuration such as set high DPI settings or default font,
-        // see https://aka.ms/applicationconfiguration.
         ApplicationConfiguration.Initialize();
+
+        // Add global exception handlers to prevent silent crashes
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException += (sender, args) => ShowError(args.Exception);
+        AppDomain.CurrentDomain.UnhandledException += (sender, args) => ShowError(args.ExceptionObject as Exception);
+
         Application.Run(new Form1());
-    }    
+    }
+
+    private static void ShowError(Exception? ex)
+    {
+        MessageBox.Show(
+            $"An unexpected error occurred. The application will attempt to continue, but it may be in an unstable state.\n\nError: {ex?.Message}\n\nTrace:\n{ex?.StackTrace}",
+            "Application Error",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Error);
+    }
 }
