@@ -113,7 +113,7 @@ public sealed class SurfacePlotView : UserControl
         }
 
         float cx = Width / 2f;
-        float cy = Height * 0.58f;
+        float cy = Height / 2f;
         float scale = (float)(Math.Min(Width, Height) * 0.29 * _zoom);
 
         // Convert rotation to radians
@@ -121,6 +121,12 @@ public sealed class SurfacePlotView : UserControl
         double ryRad = _rotY * Math.PI / 180.0;
         double cosX = Math.Cos(rxRad), sinX = Math.Sin(rxRad);
         double cosY = Math.Cos(ryRad), sinY = Math.Sin(ryRad);
+
+        RectangleF cubeBounds = GetProjectedBounds(cx, cy, scale, cosX, sinX, cosY, sinY);
+        float offsetX = (Width / 2f) - (cubeBounds.Left + cubeBounds.Width / 2f);
+        float offsetY = (Height / 2f) - (cubeBounds.Top + cubeBounds.Height / 2f);
+        cx += offsetX;
+        cy += offsetY;
 
         // Project all grid points
         int totalPts = _rows * _cols;
@@ -338,6 +344,37 @@ public sealed class SurfacePlotView : UserControl
             return ((long)Math.Round(value)).ToString();
 
         return value.ToString("G5");
+    }
+
+    private RectangleF GetProjectedBounds(float cx, float cy, float scale,
+                                          double cosX, double sinX, double cosY, double sinY)
+    {
+        PointF[] corners =
+        [
+            Project3D(-1, -1, -1, cx, cy, scale, cosX, sinX, cosY, sinY),
+            Project3D(1, -1, -1, cx, cy, scale, cosX, sinX, cosY, sinY),
+            Project3D(1, 1, -1, cx, cy, scale, cosX, sinX, cosY, sinY),
+            Project3D(-1, 1, -1, cx, cy, scale, cosX, sinX, cosY, sinY),
+            Project3D(-1, -1, 1, cx, cy, scale, cosX, sinX, cosY, sinY),
+            Project3D(1, -1, 1, cx, cy, scale, cosX, sinX, cosY, sinY),
+            Project3D(1, 1, 1, cx, cy, scale, cosX, sinX, cosY, sinY),
+            Project3D(-1, 1, 1, cx, cy, scale, cosX, sinX, cosY, sinY),
+        ];
+
+        float minX = corners[0].X;
+        float maxX = corners[0].X;
+        float minY = corners[0].Y;
+        float maxY = corners[0].Y;
+
+        for (int i = 1; i < corners.Length; i++)
+        {
+            minX = Math.Min(minX, corners[i].X);
+            maxX = Math.Max(maxX, corners[i].X);
+            minY = Math.Min(minY, corners[i].Y);
+            maxY = Math.Max(maxY, corners[i].Y);
+        }
+
+        return RectangleF.FromLTRB(minX, minY, maxX, maxY);
     }
 
     private PointF Project3D(double x3, double y3, double z3,
