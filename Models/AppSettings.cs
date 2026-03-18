@@ -28,7 +28,7 @@ public sealed class AppSettings
 
     public AppTheme Theme { get; set; } = AppTheme.Dark;
 
-    public TableViewMode DefaultTableViewMode { get; set; } = TableViewMode.Text;
+    public TableViewMode DefaultTableViewMode { get; set; } = TableViewMode.TwoD;
 
     public UiDensity UiDensity { get; set; } = UiDensity.Comfortable;
 
@@ -68,7 +68,7 @@ public sealed class AppSettings
             Theme = AppTheme.Dark;
 
         if (!Enum.IsDefined(DefaultTableViewMode))
-            DefaultTableViewMode = TableViewMode.Text;
+            DefaultTableViewMode = TableViewMode.TwoD;
 
         if (!Enum.IsDefined(UiDensity))
             UiDensity = UiDensity.Comfortable;
