@@ -34,6 +34,7 @@ public sealed class SurfacePlotView : UserControl
 
     // Left-click interaction
     private int   _pendingDragIndex = -1;
+    private bool  _clickedPointWasSelected;  // Track if clicked point was already selected before this click
     private Point _leftDragStart;
     private bool  _isValueDragging;
     private bool  _isBoxSelecting;
@@ -295,6 +296,8 @@ public sealed class SurfacePlotView : UserControl
         else if (e.Button == MouseButtons.Left && _hasData)
         {
             _pendingDragIndex = FindNearestPoint(e.Location, 20f);
+            // Remember if this point was already selected (for value-drag vs box-select logic)
+            _clickedPointWasSelected = _pendingDragIndex >= 0 && _selectedIndices.Contains(_pendingDragIndex);
             _leftDragStart    = e.Location;
             _boxSelectCurrent = e.Location;
         }
@@ -325,16 +328,16 @@ public sealed class SurfacePlotView : UserControl
 
             if (pastThreshold && !_isValueDragging && !_isBoxSelecting)
             {
-                if (_pendingDragIndex >= 0 && _selectedIndices.Contains(_pendingDragIndex))
+                if (_clickedPointWasSelected)
                 {
-                    // Drag a selected point to edit its value
+                    // Drag a previously-selected point to edit its value
                     _isValueDragging = true;
                     _dragBaseValues  = (double[])_values.Clone();
                     Cursor           = Cursors.SizeNS;
                 }
-                else if (_pendingDragIndex < 0)
+                else
                 {
-                    // Drag on empty space to box-select (replaces selection)
+                    // Drag on unselected point or empty space to box-select
                     _selectedIndices.Clear();
                     _isBoxSelecting = true;
                     Cursor          = Cursors.Cross;
