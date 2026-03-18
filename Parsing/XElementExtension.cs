@@ -33,6 +33,18 @@ public static class XElementExtension
 		return valueStr.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? Convert.ToInt32(valueStr, 16) : Convert.ToInt32(valueStr);
 	}
 
+	public static int? ParseNullableIntElement(this XElement element)
+	{
+		string? valueStr = element.Value;
+
+		if (string.IsNullOrWhiteSpace(valueStr))
+		{
+			return null;
+		}
+
+		return valueStr.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? Convert.ToInt32(valueStr, 16) : Convert.ToInt32(valueStr);
+	}
+
 	// Error handling and conversion
 	private static int ProcessAndConvert(XElement element, string? valueStr, string targetName)
 	{

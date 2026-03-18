@@ -1,4 +1,6 @@
 #nullable enable
+using OpenTuningTool.Controls;
+
 namespace OpenTuningTool;
 
 partial class Form1
@@ -34,10 +36,20 @@ partial class Form1
         menuItemExit         = new ToolStripMenuItem();
         menuItemCalibrAI     = new ToolStripMenuItem();
         menuItemDetect       = new ToolStripMenuItem();
+        toolbarPanel         = new Panel();
+        btnToolOpenXdf       = new Button();
+        btnToolOpenBin       = new Button();
+        btnToolSave          = new Button();
         splitContainer       = new SplitContainer();
+        searchBox            = new ModernSearchBox();
         treeView             = new TreeView();
+        panelDetachedPlaceholder = new Panel();
+        lblDetachedPlaceholder = new Label();
+        btnReattachDetail   = new Button();
         panelDetail          = new Panel();
+        panelDetailHeader   = new Panel();
         lblDetailTitle       = new Label();
+        btnDetachDetail     = new Button();
         panelMeta            = new Panel();
         tableLayout          = new TableLayoutPanel();
         lblIdLabel           = new Label();
@@ -54,7 +66,14 @@ partial class Form1
         lblAddressValue      = new Label();
         panelValues          = new Panel();
         lblNoBin             = new Label();
-        dgvMap               = new DataGridView();
+        dgvMap               = new StyledDataGridView();
+        tabControlView       = new FlatTabControl();
+        tabText              = new TabPage("Text");
+        tab2D                = new TabPage("2D");
+        tab3D                = new TabPage("3D");
+        heatmapView          = new HeatmapView();
+        surfacePlotView      = new SurfacePlotView();
+        btnResetView3D       = new Button();
         panelConstantValue   = new Panel();
         lblValueLabel        = new Label();
         txtConstValue        = new TextBox();
@@ -62,13 +81,17 @@ partial class Form1
         btnApplyValue        = new Button();
         statusStrip          = new StatusStrip();
         statusLabel          = new ToolStripStatusLabel();
+        statusDimensions     = new ToolStripStatusLabel();
+        statusBinInfo        = new ToolStripStatusLabel();
 
         menuStrip.SuspendLayout();
         ((System.ComponentModel.ISupportInitialize)splitContainer).BeginInit();
         splitContainer.Panel1.SuspendLayout();
         splitContainer.Panel2.SuspendLayout();
         splitContainer.SuspendLayout();
+        panelDetachedPlaceholder.SuspendLayout();
         panelDetail.SuspendLayout();
+        panelDetailHeader.SuspendLayout();
         panelMeta.SuspendLayout();
         tableLayout.SuspendLayout();
         panelValues.SuspendLayout();
@@ -94,11 +117,11 @@ partial class Form1
             menuItemExit
         });
 
-        menuItemOpenXdf.Text         = "&Open XDF…";
+        menuItemOpenXdf.Text         = "&Open XDF\u2026";
         menuItemOpenXdf.ShortcutKeys = Keys.Control | Keys.O;
         menuItemOpenXdf.Click       += MenuOpenXdf_Click;
 
-        menuItemOpenBin.Text         = "Open &BIN…";
+        menuItemOpenBin.Text         = "Open &BIN\u2026";
         menuItemOpenBin.ShortcutKeys = Keys.Control | Keys.B;
         menuItemOpenBin.Enabled      = false;
         menuItemOpenBin.Click       += MenuOpenBin_Click;
@@ -108,12 +131,12 @@ partial class Form1
         menuItemSaveBin.Enabled      = false;
         menuItemSaveBin.Click       += MenuSaveBin_Click;
 
-        menuItemSaveBinAs.Text       = "Save BIN &As…";
+        menuItemSaveBinAs.Text       = "Save BIN &As\u2026";
         menuItemSaveBinAs.ShortcutKeys = Keys.Control | Keys.Shift | Keys.S;
         menuItemSaveBinAs.Enabled    = false;
         menuItemSaveBinAs.Click     += MenuSaveBinAs_Click;
 
-        menuItemSettings.Text         = "&Settings…";
+        menuItemSettings.Text         = "&Settings\u2026";
         menuItemSettings.Click       += MenuSettings_Click;
 
         menuItemExit.Text            = "E&xit";
@@ -121,12 +144,55 @@ partial class Form1
 
         menuItemCalibrAI.Text = "&CalibrAI";
         menuItemCalibrAI.DropDownItems.Add(menuItemDetect);
-        menuItemDetect.Text    = "&Detect Maps in BIN…";
+        menuItemDetect.Text    = "&Detect Maps in BIN\u2026";
         menuItemDetect.Enabled = false;
         menuItemDetect.Click  += MenuDetectMaps_Click;
 
         foreach (ToolStripItem item in menuItemFile.DropDownItems) { item.BackColor = bgDark; item.ForeColor = fgLight; }
         foreach (ToolStripItem item in menuItemCalibrAI.DropDownItems) { item.BackColor = bgDark; item.ForeColor = fgLight; }
+
+        // ===== Toolbar Panel =====
+        toolbarPanel.Dock = DockStyle.Top;
+        toolbarPanel.Height = 36;
+        toolbarPanel.BackColor = bgPanel;
+        toolbarPanel.Padding = new Padding(6, 4, 6, 4);
+
+        btnToolOpenXdf.Text = "\U0001F4C2 XDF";
+        btnToolOpenXdf.FlatStyle = FlatStyle.Flat;
+        btnToolOpenXdf.FlatAppearance.BorderSize = 0;
+        btnToolOpenXdf.BackColor = bgControl;
+        btnToolOpenXdf.ForeColor = fgLight;
+        btnToolOpenXdf.Size = new Size(64, 28);
+        btnToolOpenXdf.Location = new Point(6, 4);
+        btnToolOpenXdf.Cursor = Cursors.Hand;
+        btnToolOpenXdf.Font = new Font("Segoe UI", 8.5f);
+        btnToolOpenXdf.Click += MenuOpenXdf_Click;
+
+        btnToolOpenBin.Text = "\U0001F4C2 BIN";
+        btnToolOpenBin.FlatStyle = FlatStyle.Flat;
+        btnToolOpenBin.FlatAppearance.BorderSize = 0;
+        btnToolOpenBin.BackColor = bgControl;
+        btnToolOpenBin.ForeColor = fgLight;
+        btnToolOpenBin.Size = new Size(64, 28);
+        btnToolOpenBin.Location = new Point(74, 4);
+        btnToolOpenBin.Cursor = Cursors.Hand;
+        btnToolOpenBin.Font = new Font("Segoe UI", 8.5f);
+        btnToolOpenBin.Enabled = false;
+        btnToolOpenBin.Click += MenuOpenBin_Click;
+
+        btnToolSave.Text = "\U0001F4BE Save";
+        btnToolSave.FlatStyle = FlatStyle.Flat;
+        btnToolSave.FlatAppearance.BorderSize = 0;
+        btnToolSave.BackColor = bgControl;
+        btnToolSave.ForeColor = fgLight;
+        btnToolSave.Size = new Size(68, 28);
+        btnToolSave.Location = new Point(142, 4);
+        btnToolSave.Cursor = Cursors.Hand;
+        btnToolSave.Font = new Font("Segoe UI", 8.5f);
+        btnToolSave.Enabled = false;
+        btnToolSave.Click += MenuSaveBin_Click;
+
+        toolbarPanel.Controls.AddRange(new Control[] { btnToolOpenXdf, btnToolOpenBin, btnToolSave });
 
         // ===== SplitContainer =====
         splitContainer.Dock = DockStyle.Fill;
@@ -134,7 +200,27 @@ partial class Form1
         splitContainer.Panel1MinSize = 160;
         splitContainer.Panel2MinSize = 400;
         splitContainer.SplitterDistance = 260;
+        splitContainer.SplitterWidth = 2;
         splitContainer.BackColor = bgPanel;
+
+        // Search box at top of left panel
+        searchBox.Dock = DockStyle.Top;
+        searchBox.Height = 28;
+        searchBox.Placeholder = "Search tables...";
+        searchBox.Margin = new Padding(6, 6, 6, 4);
+        searchBox.ApplyThemeColors(bgControl, fgLight, Color.FromArgb(70, 70, 74), Color.FromArgb(150, 150, 150));
+        searchBox.SearchTextChanged += SearchBox_TextChanged;
+
+        // Padding panel for search box
+        var searchPadding = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 36,
+            BackColor = bgPanel,
+            Padding = new Padding(6, 5, 6, 3)
+        };
+        searchBox.Dock = DockStyle.Fill;
+        searchPadding.Controls.Add(searchBox);
 
         treeView.Dock = DockStyle.Fill;
         treeView.HideSelection = false;
@@ -142,24 +228,74 @@ partial class Form1
         treeView.ForeColor = fgLight;
         treeView.BorderStyle = BorderStyle.None;
         treeView.LineColor = fgLight;
+        treeView.Font = new Font("Segoe UI", 9.5f);
+        treeView.ItemHeight = 24;
         treeView.AfterSelect += TreeView_AfterSelect;
+
         splitContainer.Panel1.Controls.Add(treeView);
+        splitContainer.Panel1.Controls.Add(searchPadding);
+
+        // Right: detached placeholder
+        panelDetachedPlaceholder.Dock = DockStyle.Fill;
+        panelDetachedPlaceholder.Visible = false;
+        panelDetachedPlaceholder.BackColor = bgDark;
+        panelDetachedPlaceholder.Padding = new Padding(24);
+
+        lblDetachedPlaceholder.Dock = DockStyle.Fill;
+        lblDetachedPlaceholder.TextAlign = ContentAlignment.MiddleCenter;
+        lblDetachedPlaceholder.ForeColor = fgLight;
+        lblDetachedPlaceholder.Font = new Font("Segoe UI", 10F, FontStyle.Italic);
+        lblDetachedPlaceholder.Padding = new Padding(0, 0, 0, 48);
+        lblDetachedPlaceholder.Text = "The data view is detached into its own window.";
+
+        btnReattachDetail.Dock = DockStyle.Bottom;
+        btnReattachDetail.Height = 32;
+        btnReattachDetail.Text = "Attach Back";
+        btnReattachDetail.FlatStyle = FlatStyle.Flat;
+        btnReattachDetail.FlatAppearance.BorderSize = 1;
+        btnReattachDetail.FlatAppearance.BorderColor = Color.FromArgb(70, 70, 74);
+        btnReattachDetail.BackColor = bgControl;
+        btnReattachDetail.ForeColor = fgLight;
+        btnReattachDetail.Cursor = Cursors.Hand;
+        btnReattachDetail.Click += BtnReattachDetail_Click;
+
+        panelDetachedPlaceholder.Controls.Add(lblDetachedPlaceholder);
+        panelDetachedPlaceholder.Controls.Add(btnReattachDetail);
 
         // Right: panelDetail
         panelDetail.Dock = DockStyle.Fill;
         panelDetail.Visible = false;
         panelDetail.BackColor = bgDark;
+        splitContainer.Panel2.Controls.Add(panelDetachedPlaceholder);
         splitContainer.Panel2.Controls.Add(panelDetail);
 
         // ===== panelDetail =====
         // Title strip at top
+        panelDetailHeader.Dock = DockStyle.Top;
+        panelDetailHeader.Height = 40;
+        panelDetailHeader.BackColor = bgPanel;
+        panelDetailHeader.Padding = new Padding(0);
+
         lblDetailTitle.AutoSize = false;
-        lblDetailTitle.Dock = DockStyle.Top;
-        lblDetailTitle.Height = 36;
-        lblDetailTitle.Font = new Font("Segoe UI", 12F, FontStyle.Bold);
-        lblDetailTitle.Padding = new Padding(10, 8, 0, 0);
+        lblDetailTitle.Dock = DockStyle.Fill;
+        lblDetailTitle.Font = new Font("Segoe UI", 13F, FontStyle.Bold);
+        lblDetailTitle.Padding = new Padding(12, 10, 0, 0);
         lblDetailTitle.BackColor = bgPanel;
         lblDetailTitle.ForeColor = accent;
+
+        btnDetachDetail.Dock = DockStyle.Right;
+        btnDetachDetail.Width = 92;
+        btnDetachDetail.Text = "Detach";
+        btnDetachDetail.FlatStyle = FlatStyle.Flat;
+        btnDetachDetail.FlatAppearance.BorderSize = 0;
+        btnDetachDetail.BackColor = bgPanel;
+        btnDetachDetail.ForeColor = fgLight;
+        btnDetachDetail.Cursor = Cursors.Hand;
+        btnDetachDetail.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+        btnDetachDetail.Click += BtnDetachDetail_Click;
+
+        panelDetailHeader.Controls.Add(lblDetailTitle);
+        panelDetailHeader.Controls.Add(btnDetachDetail);
 
         // Meta panel (fixed height) below title
         panelMeta.Dock = DockStyle.Top;
@@ -208,45 +344,49 @@ partial class Form1
         lblNoBin.Font = new Font("Segoe UI", 10F, FontStyle.Italic);
         lblNoBin.Text = "Open a BIN file to view and edit values.";
 
-        // TabControl for Map View (Text, 2D, 3D)
-        tabControlView = new TabControl();
-        tabText = new TabPage("Text");
-        tab2D = new TabPage("2D");
-        tab3D = new TabPage("3D");
-
+        // ===== FlatTabControl for Map View (Text, 2D, 3D) =====
         tabControlView.Dock = DockStyle.Fill;
-        tabControlView.Visible = false; // Hide if no valid data
-        tabControlView.Controls.AddRange(new Control[] { tabText, tab2D, tab3D });
+        tabControlView.Visible = false;
+        tabControlView.TabPages.AddRange(new TabPage[] { tabText, tab2D, tab3D });
 
-        // Map DataGridView
+        // Map DataGridView (styled)
         dgvMap.Dock = DockStyle.Fill;
         dgvMap.AllowUserToAddRows = false;
         dgvMap.AllowUserToDeleteRows = false;
         dgvMap.RowHeadersWidth = 60;
-        dgvMap.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.ColumnHeader;
-        dgvMap.BackgroundColor = bgDark;
-        dgvMap.BorderStyle = BorderStyle.None;
-        dgvMap.GridColor = Color.FromArgb(60, 60, 60);
-        dgvMap.EnableHeadersVisualStyles = false;
-        dgvMap.ColumnHeadersDefaultCellStyle.BackColor = bgPanel;
-        dgvMap.ColumnHeadersDefaultCellStyle.ForeColor = fgLight;
-        dgvMap.RowHeadersDefaultCellStyle.BackColor = bgPanel;
-        dgvMap.RowHeadersDefaultCellStyle.ForeColor = fgLight;
-        dgvMap.DefaultCellStyle.BackColor = bgControl;
-        dgvMap.DefaultCellStyle.ForeColor = fgLight;
-        dgvMap.DefaultCellStyle.SelectionBackColor = accent;
+        dgvMap.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
+        dgvMap.ApplyThemeColors(bgDark, bgPanel, bgControl, fgLight, accent, Color.FromArgb(60, 60, 60));
         dgvMap.CellEndEdit += DgvMap_CellEndEdit;
 
         tabText.Controls.Add(dgvMap);
         tabText.BackColor = bgDark;
 
-        // Placeholders for 2D / 3D
-        var lbl2D = new Label { Text = "2D View (Rendering not implemented yet)", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, ForeColor = fgLight };
-        tab2D.Controls.Add(lbl2D);
+        // 2D Heatmap View
+        heatmapView.Dock = DockStyle.Fill;
+        heatmapView.ApplyThemeColors(bgDark, fgLight, Color.FromArgb(60, 60, 60), accent);
+        tab2D.Controls.Add(heatmapView);
         tab2D.BackColor = bgDark;
 
-        var lbl3D = new Label { Text = "3D View (Rendering not implemented yet)", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, ForeColor = fgLight };
-        tab3D.Controls.Add(lbl3D);
+        // 3D Surface View with Reset button
+        surfacePlotView.Dock = DockStyle.Fill;
+        surfacePlotView.ApplyThemeColors(bgDark, fgLight, Color.FromArgb(60, 60, 60), accent);
+
+        btnResetView3D.Text = "Reset View";
+        btnResetView3D.Size = new Size(80, 26);
+        btnResetView3D.FlatStyle = FlatStyle.Flat;
+        btnResetView3D.FlatAppearance.BorderSize = 1;
+        btnResetView3D.FlatAppearance.BorderColor = Color.FromArgb(70, 70, 74);
+        btnResetView3D.BackColor = Color.FromArgb(50, bgPanel.R, bgPanel.G, bgPanel.B);
+        btnResetView3D.ForeColor = fgLight;
+        btnResetView3D.Font = new Font("Segoe UI", 7.5f);
+        btnResetView3D.Cursor = Cursors.Hand;
+        btnResetView3D.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        btnResetView3D.Click += BtnResetView3D_Click;
+
+        tab3D.Controls.Add(btnResetView3D);
+        tab3D.Controls.Add(surfacePlotView);
+        btnResetView3D.BringToFront();
+        btnResetView3D.Location = new Point(tab3D.Width - 90, 6);
         tab3D.BackColor = bgDark;
 
         // Constant value panel
@@ -291,26 +431,43 @@ partial class Form1
         // Wire panelDetail together (Controls added bottom-to-top for DockStyle.Top)
         panelDetail.Controls.Add(panelValues);
         panelDetail.Controls.Add(panelMeta);
-        panelDetail.Controls.Add(lblDetailTitle);
+        panelDetail.Controls.Add(panelDetailHeader);
 
         // ===== StatusStrip =====
-        statusStrip.BackColor = bgDark;
+        statusStrip.BackColor = bgPanel;
         statusStrip.ForeColor = fgLight;
-        statusStrip.Items.Add(statusLabel);
+        statusStrip.SizingGrip = false;
+        statusStrip.Items.AddRange(new ToolStripItem[] { statusLabel, statusDimensions, statusBinInfo });
+
         statusLabel.Spring = true;
         statusLabel.TextAlign = ContentAlignment.MiddleLeft;
-        statusLabel.Text = "Ready. Use File > Open XDF… to load a definition file.";
+        statusLabel.Text = "Ready. Use File > Open XDF\u2026 to load a definition file.";
+        statusLabel.Font = new Font("Segoe UI", 8.5f);
+
+        statusDimensions.AutoSize = false;
+        statusDimensions.Width = 80;
+        statusDimensions.TextAlign = ContentAlignment.MiddleCenter;
+        statusDimensions.BorderSides = ToolStripStatusLabelBorderSides.Left;
+        statusDimensions.BorderStyle = Border3DStyle.Etched;
+        statusDimensions.Font = new Font("Consolas", 8.5f);
+
+        statusBinInfo.AutoSize = false;
+        statusBinInfo.Width = 120;
+        statusBinInfo.TextAlign = ContentAlignment.MiddleCenter;
+        statusBinInfo.BorderSides = ToolStripStatusLabelBorderSides.Left;
+        statusBinInfo.BorderStyle = Border3DStyle.Etched;
+        statusBinInfo.Font = new Font("Segoe UI", 8.5f);
 
         // ===== Form1 =====
         AutoScaleDimensions = new SizeF(7F, 15F);
         AutoScaleMode = AutoScaleMode.Font;
-        ClientSize = new Size(1050, 650);
+        ClientSize = new Size(1100, 700);
         MinimumSize = new Size(800, 550);
-        Text = "OpenTuningTool - Dark Mode";
+        Text = "OpenTuningTool";
         BackColor = bgDark;
         ForeColor = fgLight;
         MainMenuStrip = menuStrip;
-        Controls.AddRange(new Control[] { splitContainer, statusStrip, menuStrip });
+        Controls.AddRange(new Control[] { splitContainer, toolbarPanel, statusStrip, menuStrip });
 
         menuStrip.ResumeLayout(false);
         menuStrip.PerformLayout();
@@ -318,7 +475,9 @@ partial class Form1
         splitContainer.Panel2.ResumeLayout(false);
         ((System.ComponentModel.ISupportInitialize)splitContainer).EndInit();
         splitContainer.ResumeLayout(false);
+        panelDetachedPlaceholder.ResumeLayout(false);
         panelDetail.ResumeLayout(false);
+        panelDetailHeader.ResumeLayout(false);
         panelMeta.ResumeLayout(false);
         tableLayout.ResumeLayout(false);
         panelValues.ResumeLayout(false);
@@ -361,10 +520,20 @@ partial class Form1
     private ToolStripMenuItem menuItemExit = null!;
     private ToolStripMenuItem menuItemCalibrAI = null!;
     private ToolStripMenuItem menuItemDetect = null!;
+    private Panel toolbarPanel = null!;
+    private Button btnToolOpenXdf = null!;
+    private Button btnToolOpenBin = null!;
+    private Button btnToolSave = null!;
     private SplitContainer splitContainer = null!;
+    private ModernSearchBox searchBox = null!;
     private TreeView treeView = null!;
+    private Panel panelDetachedPlaceholder = null!;
+    private Label lblDetachedPlaceholder = null!;
+    private Button btnReattachDetail = null!;
     private Panel panelDetail = null!;
+    private Panel panelDetailHeader = null!;
     private Label lblDetailTitle = null!;
+    private Button btnDetachDetail = null!;
     private Panel panelMeta = null!;
     private TableLayoutPanel tableLayout = null!;
     private Label lblIdLabel = null!;
@@ -381,11 +550,14 @@ partial class Form1
     private Label lblAddressValue = null!;
     private Panel panelValues = null!;
     private Label lblNoBin = null!;
-    private TabControl tabControlView = null!;
+    private FlatTabControl tabControlView = null!;
     private TabPage tabText = null!;
     private TabPage tab2D = null!;
     private TabPage tab3D = null!;
-    private DataGridView dgvMap = null!;
+    private StyledDataGridView dgvMap = null!;
+    private HeatmapView heatmapView = null!;
+    private SurfacePlotView surfacePlotView = null!;
+    private Button btnResetView3D = null!;
     private Panel panelConstantValue = null!;
     private Label lblValueLabel = null!;
     private TextBox txtConstValue = null!;
@@ -393,4 +565,6 @@ partial class Form1
     private Button btnApplyValue = null!;
     private StatusStrip statusStrip = null!;
     private ToolStripStatusLabel statusLabel = null!;
+    private ToolStripStatusLabel statusDimensions = null!;
+    private ToolStripStatusLabel statusBinInfo = null!;
 }

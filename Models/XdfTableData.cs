@@ -8,8 +8,16 @@ public class XdfTableData
 	public int ElementSizeBits {get; }
 	public int MajorStrideBits {get; }
 	public int MinorStrideBits {get; }
+	public XdfValueFormat Format { get; }
 
-	public XdfTableData (int address, int rowCount, int colCount, int elementSizeBits, int majorStrideBits, int minorStrideBits)
+	public XdfTableData(
+		int address,
+		int rowCount,
+		int colCount,
+		int elementSizeBits,
+		int majorStrideBits,
+		int minorStrideBits,
+		XdfValueFormat? format = null)
 	{
 		Address = address;
 		RowCount = rowCount;
@@ -17,5 +25,6 @@ public class XdfTableData
 		ElementSizeBits = elementSizeBits;
 		MajorStrideBits = majorStrideBits;
 		MinorStrideBits = minorStrideBits;
+		Format = format ?? XdfValueFormat.Identity;
 	}
 }

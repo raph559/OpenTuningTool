@@ -2,6 +2,7 @@ using OpenTuningTool.Forms;
 using OpenTuningTool.Models;
 using OpenTuningTool.Parsing;
 using OpenTuningTool.Services;
+using System.Globalization;
 
 namespace OpenTuningTool;
 
@@ -15,6 +16,8 @@ public partial class Form1 : Form
     private XdfTable? _selectedTable;
     private XdfConstant? _selectedConstant;
     private TableSearchForm? _tableSearchForm;
+    private Form? _detachedDetailForm;
+    private bool _isMainFormClosing;
     private readonly CalibrAiClient _calibrAi = new();
 
     public Form1()
@@ -74,6 +77,18 @@ public partial class Form1 : Form
             ThemeUtility.ApplyTheme(_tableSearchForm, _settings.Theme);
             ThemeUtility.ApplyUiDensity(_tableSearchForm, _settings.UiDensity);
         }
+
+        if (_detachedDetailForm != null && !_detachedDetailForm.IsDisposed)
+        {
+            ThemeUtility.ApplyTheme(_detachedDetailForm, _settings.Theme);
+            ThemeUtility.ApplyUiDensity(_detachedDetailForm, _settings.UiDensity);
+        }
+
+        UpdateDetailDetachUi();
+        UpdateDetachedDetailWindowTitle();
+
+        if (_selectedTable != null || _selectedConstant != null)
+            RefreshDetailPanel();
     }
 
     private int GetDefaultTableViewIndex()
@@ -115,6 +130,7 @@ public partial class Form1 : Form
             RefreshTableSearchWindow();
             menuItemDetect.Enabled = true;
             menuItemOpenBin.Enabled = true;
+            btnToolOpenBin.Enabled = true;
             SetStatus(
                 $"Loaded: {Path.GetFileName(path)} " +
                 $"— {_document.Tables.Count} tables, {_document.Constants.Count} constants" +
@@ -158,7 +174,9 @@ public partial class Form1 : Form
             SaveSettingsQuietly();
             menuItemSaveBin.Enabled = true;
             menuItemSaveBinAs.Enabled = true;
+            btnToolSave.Enabled = true;
             UpdateTitleBar();
+            statusBinInfo.Text = $"{_bin.Length:N0} bytes";
             SetStatus($"BIN loaded: {Path.GetFileName(dlg.FileName)}  ({_bin.Length:N0} bytes)");
 
             // Refresh detail panel to show values
@@ -370,6 +388,118 @@ public partial class Form1 : Form
         }
     }
 
+    private bool IsDetailDetached => panelDetail.Parent != splitContainer.Panel2;
+
+    private void BtnDetachDetail_Click(object? sender, EventArgs e)
+    {
+        if (IsDetailDetached) AttachDetailPanel();
+        else DetachDetailPanel();
+    }
+
+    private void BtnReattachDetail_Click(object? sender, EventArgs e) => AttachDetailPanel();
+
+    private void DetachDetailPanel()
+    {
+        EnsureDetachedDetailForm();
+        if (_detachedDetailForm == null)
+            return;
+
+        panelDetail.Parent?.Controls.Remove(panelDetail);
+        _detachedDetailForm.Controls.Add(panelDetail);
+        panelDetail.Dock = DockStyle.Fill;
+        panelDetail.BringToFront();
+
+        panelDetachedPlaceholder.Visible = true;
+        panelDetachedPlaceholder.BringToFront();
+        UpdateDetailDetachUi();
+        UpdateDetachedDetailWindowTitle();
+
+        if (!_detachedDetailForm.Visible)
+            _detachedDetailForm.Show(this);
+        else
+            _detachedDetailForm.BringToFront();
+    }
+
+    private void AttachDetailPanel()
+    {
+        if (panelDetail.Parent == splitContainer.Panel2)
+        {
+            panelDetachedPlaceholder.Visible = false;
+            UpdateDetailDetachUi();
+            return;
+        }
+
+        panelDetail.Parent?.Controls.Remove(panelDetail);
+        splitContainer.Panel2.Controls.Add(panelDetail);
+        panelDetail.Dock = DockStyle.Fill;
+        panelDetail.BringToFront();
+        panelDetachedPlaceholder.Visible = false;
+        UpdateDetailDetachUi();
+
+        if (_detachedDetailForm != null && !_detachedDetailForm.IsDisposed)
+        {
+            Form detached = _detachedDetailForm;
+            _detachedDetailForm = null;
+            detached.Close();
+        }
+    }
+
+    private void EnsureDetachedDetailForm()
+    {
+        if (_detachedDetailForm != null && !_detachedDetailForm.IsDisposed)
+            return;
+
+        _detachedDetailForm = new Form
+        {
+            StartPosition = FormStartPosition.Manual,
+            ShowInTaskbar = false,
+            Size = new Size(Math.Max(540, splitContainer.Panel2.Width), Math.Max(420, splitContainer.Panel2.Height + 70)),
+            MinimumSize = new Size(480, 360),
+            FormBorderStyle = FormBorderStyle.Sizable,
+        };
+
+        Rectangle sourceBounds = RectangleToScreen(splitContainer.Panel2.Bounds);
+        _detachedDetailForm.Location = new Point(
+            Math.Max(0, sourceBounds.Left + 40),
+            Math.Max(0, sourceBounds.Top + 40));
+        _detachedDetailForm.FormClosed += DetachedDetailForm_FormClosed;
+
+        ThemeUtility.ApplyTheme(_detachedDetailForm, _settings.Theme);
+        ThemeUtility.ApplyUiDensity(_detachedDetailForm, _settings.UiDensity);
+        UpdateDetachedDetailWindowTitle();
+    }
+
+    private void DetachedDetailForm_FormClosed(object? sender, FormClosedEventArgs e)
+    {
+        if (!ReferenceEquals(sender, _detachedDetailForm) && sender is not Form)
+            return;
+
+        if (ReferenceEquals(sender, _detachedDetailForm))
+            _detachedDetailForm = null;
+
+        if (_isMainFormClosing || panelDetail.IsDisposed)
+            return;
+
+        AttachDetailPanel();
+    }
+
+    private void UpdateDetailDetachUi()
+    {
+        bool detached = IsDetailDetached;
+        btnDetachDetail.Text = detached ? "Dock" : "Detach";
+        btnReattachDetail.Visible = detached;
+        panelDetachedPlaceholder.Visible = detached;
+    }
+
+    private void UpdateDetachedDetailWindowTitle()
+    {
+        if (_detachedDetailForm == null || _detachedDetailForm.IsDisposed)
+            return;
+
+        string detailName = _selectedTable?.Title ?? _selectedConstant?.Title ?? "Data View";
+        _detachedDetailForm.Text = $"Data View — {detailName}";
+    }
+
     // -----------------------------------------------------------------------
     // TreeView selection → detail panel
     // -----------------------------------------------------------------------
@@ -426,28 +556,34 @@ public partial class Form1 : Form
                 $"{table.ZAxis.RowCount}×{table.ZAxis.ColCount}" +
                 $" @ 0x{absAddr:X}" +
                 $"  [{table.ZAxis.ElementSizeBits}-bit, " +
-                (table.ZAxis.MajorStrideBits < 0 ? "big-endian" : "little-endian") + "]";
+                GetEndianLabel(table.ZAxis.Format) + "]";
         }
         else lblDataValue.Text = "(none)";
 
         panelDetail.Visible = true;
+        UpdateDetachedDetailWindowTitle();
 
         // Values area
         if (_bin != null && table.ZAxis != null)
         {
             int absAddr   = _document!.BaseOffset + table.ZAxis.Address;
-            bool bigEndian = table.ZAxis.MajorStrideBits < 0;
             int byteCount = table.ZAxis.RowCount * table.ZAxis.ColCount * (table.ZAxis.ElementSizeBits / 8);
 
             if (_bin.IsAddressValid(absAddr, byteCount))
             {
-                double[] values = _bin.ReadMap(absAddr, table.ZAxis.RowCount, table.ZAxis.ColCount,
-                                               table.ZAxis.ElementSizeBits, bigEndian);
+                double[] values = _bin.ReadMap(
+                    absAddr,
+                    table.ZAxis.RowCount,
+                    table.ZAxis.ColCount,
+                    table.ZAxis.ElementSizeBits,
+                    table.ZAxis.Format);
                 LoadMapIntoGrid(table, values);
+                LoadVisualizationViews(table, values);
                 tabControlView.SelectedIndex = GetDefaultTableViewIndex();
                 tabControlView.Visible  = true;
                 panelConstantValue.Visible = false;
                 lblNoBin.Visible        = false;
+                statusDimensions.Text = $"{table.ZAxis.RowCount}\u00D7{table.ZAxis.ColCount}";
             }
             else
             {
@@ -489,6 +625,7 @@ public partial class Form1 : Form
         lblDataLabel.Visible = true; lblDataValue.Visible = true;
 
         panelDetail.Visible = true;
+        UpdateDetachedDetailWindowTitle();
 
         // Values area
         if (_bin != null)
@@ -496,12 +633,14 @@ public partial class Form1 : Form
             int byteCount = constant.ElementSizeBits / 8;
             if (_bin.IsAddressValid(absAddr, byteCount))
             {
-                // Determine endianness: negative stride not available for constants; use 8-bit as LE,
-                // 16/32-bit default to big-endian (typical Bosch/Siemens).
-                bool bigEndian = constant.ElementSizeBits > 8;
-                double[] vals = _bin.ReadMap(absAddr, 1, 1, constant.ElementSizeBits, bigEndian);
-                txtConstValue.Text = ((long)vals[0]).ToString();
-                lblConstEndian.Text = bigEndian ? "(big-endian)" : "(little-endian)";
+                double[] vals = _bin.ReadMap(absAddr, 1, 1, constant.ElementSizeBits, constant.Format);
+                bool canEdit = CanEditValue(constant.Format, constant.ElementSizeBits);
+                txtConstValue.Text = FormatDisplayValue(vals[0], constant.Format);
+                txtConstValue.ReadOnly = !canEdit;
+                btnApplyValue.Enabled = canEdit;
+                lblConstEndian.Text = canEdit
+                    ? $"({GetEndianLabel(constant.Format)})"
+                    : $"({GetEndianLabel(constant.Format)}, read-only)";
                 tabControlView.Visible = false; panelConstantValue.Visible = true; lblNoBin.Visible = false;
             }
             else
@@ -522,6 +661,7 @@ public partial class Form1 : Form
         _selectedTable    = null;
         _selectedConstant = null;
         panelDetail.Visible = false;
+        UpdateDetachedDetailWindowTitle();
     }
 
     // -----------------------------------------------------------------------
@@ -532,16 +672,18 @@ public partial class Form1 : Form
     {
         int rows = table.ZAxis!.RowCount;
         int cols = table.ZAxis.ColCount;
+        XdfValueFormat zFormat = table.ZAxis.Format;
 
         dgvMap.SuspendLayout();
         dgvMap.Rows.Clear();
         dgvMap.Columns.Clear();
+        dgvMap.ReadOnly = !CanEditValue(zFormat, table.ZAxis.ElementSizeBits);
 
         // Column headers from X-axis values if readable, else indices
         double[]? xVals = TryReadAxisValues(table.XAxis);
         for (int c = 0; c < cols; c++)
         {
-            string header = xVals != null ? ((long)xVals[c]).ToString() : c.ToString();
+            string header = GetAxisDisplayLabel(table.XAxis, c, xVals);
             dgvMap.Columns.Add(new DataGridViewTextBoxColumn
             {
                 HeaderText = header,
@@ -553,25 +695,137 @@ public partial class Form1 : Form
         double[]? yVals = TryReadAxisValues(table.YAxis);
         for (int r = 0; r < rows; r++)
         {
-            string rowHeader = yVals != null ? ((long)yVals[r]).ToString() : r.ToString();
+            string rowHeader = GetAxisDisplayLabel(table.YAxis, r, yVals);
             int idx = dgvMap.Rows.Add();
             dgvMap.Rows[idx].HeaderCell.Value = rowHeader;
             for (int c = 0; c < cols; c++)
-                dgvMap.Rows[idx].Cells[c].Value = (long)values[r * cols + c];
+                dgvMap.Rows[idx].Cells[c].Value = FormatDisplayValue(values[r * cols + c], zFormat);
         }
 
-        dgvMap.RowHeadersWidth = 60;
+        ResizeMapGridColumns();
         dgvMap.ResumeLayout();
+    }
+
+    private void ResizeMapGridColumns()
+    {
+        if (dgvMap.Columns.Count == 0)
+        {
+            dgvMap.RowHeadersWidth = 60;
+            return;
+        }
+
+        const int cellPadding = 20;
+        const int headerPadding = 24;
+        TextFormatFlags measureFlags = TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine;
+        Font headerFont = dgvMap.ColumnHeadersDefaultCellStyle.Font ?? dgvMap.Font;
+        Font cellFont = dgvMap.DefaultCellStyle.Font ?? dgvMap.Font;
+        Font rowHeaderFont = dgvMap.RowHeadersDefaultCellStyle.Font ?? dgvMap.Font;
+
+        foreach (DataGridViewColumn column in dgvMap.Columns)
+        {
+            int width = MeasureGridText(column.HeaderText, headerFont, measureFlags) + headerPadding;
+
+            foreach (DataGridViewRow row in dgvMap.Rows)
+            {
+                if (row.IsNewRow) continue;
+
+                DataGridViewCell cell = row.Cells[column.Index];
+                string text = Convert.ToString(cell.FormattedValue ?? cell.Value, CultureInfo.CurrentCulture) ?? string.Empty;
+                width = Math.Max(width, MeasureGridText(text, cellFont, measureFlags) + cellPadding);
+            }
+
+            column.Width = Math.Max(width, 56);
+        }
+
+        int rowHeaderWidth = 60;
+        foreach (DataGridViewRow row in dgvMap.Rows)
+        {
+            if (row.IsNewRow) continue;
+
+            string text = Convert.ToString(row.HeaderCell.FormattedValue ?? row.HeaderCell.Value, CultureInfo.CurrentCulture) ?? string.Empty;
+            rowHeaderWidth = Math.Max(rowHeaderWidth, MeasureGridText(text, rowHeaderFont, measureFlags) + cellPadding);
+        }
+
+        dgvMap.RowHeadersWidth = rowHeaderWidth;
+    }
+
+    private static int MeasureGridText(string? text, Font font, TextFormatFlags flags)
+    {
+        string measureText = string.IsNullOrEmpty(text) ? " " : text;
+        return TextRenderer.MeasureText(measureText, font, Size.Empty, flags).Width;
     }
 
     private double[]? TryReadAxisValues(XdfAxis? axis)
     {
-        if (_bin == null || axis == null || !axis.Address.HasValue) return null;
-        int absAddr  = _document!.BaseOffset + axis.Address.Value;
-        bool bigEndian = axis.MajorStrideBits < 0;
-        int byteCount = axis.IndexCount * (axis.ElementSizeBits / 8);
-        if (!_bin.IsAddressValid(absAddr, byteCount)) return null;
-        return _bin.ReadMap(absAddr, 1, axis.IndexCount, axis.ElementSizeBits, bigEndian);
+        if (_bin == null || _document == null || axis == null)
+            return null;
+
+        XdfTable? breakpointTable = TryResolveAxisBreakpointTable(axis);
+        if (breakpointTable?.ZAxis != null)
+        {
+            XdfTableData zAxis = breakpointTable.ZAxis;
+            int absAddr = _document.BaseOffset + zAxis.Address;
+            int valueCount = zAxis.RowCount * zAxis.ColCount;
+            int byteCount = valueCount * (zAxis.ElementSizeBits / 8);
+            if (!_bin.IsAddressValid(absAddr, byteCount))
+                return null;
+
+            double[] values = _bin.ReadMap(absAddr, zAxis.RowCount, zAxis.ColCount, zAxis.ElementSizeBits, zAxis.Format);
+            if (values.Length == axis.IndexCount)
+                return values;
+
+            if (values.Length > axis.IndexCount)
+                return values.Take(axis.IndexCount).ToArray();
+
+            return null;
+        }
+
+        if (!axis.Address.HasValue)
+            return null;
+
+        int axisAbsAddr = _document.BaseOffset + axis.Address.Value;
+        int axisByteCount = axis.IndexCount * (axis.ElementSizeBits / 8);
+        if (!_bin.IsAddressValid(axisAbsAddr, axisByteCount))
+            return null;
+
+        return _bin.ReadMap(axisAbsAddr, 1, axis.IndexCount, axis.ElementSizeBits, axis.Format);
+    }
+
+    private XdfTable? TryResolveAxisBreakpointTable(XdfAxis axis)
+    {
+        if (_document == null || !axis.Address.HasValue)
+            return null;
+
+        int rawAddress = axis.Address.Value;
+
+        XdfTable? exactMatch = _document.Tables.FirstOrDefault(table =>
+            !ReferenceEquals(table, _selectedTable) &&
+            table.ZAxis != null &&
+            table.ZAxis.Address == rawAddress &&
+            table.ZAxis.RowCount * table.ZAxis.ColCount == axis.IndexCount);
+
+        if (exactMatch != null)
+            return exactMatch;
+
+        return _document.Tables.FirstOrDefault(table =>
+            !ReferenceEquals(table, _selectedTable) &&
+            table.ZAxis != null &&
+            table.ZAxis.Address == rawAddress);
+    }
+
+    private string GetAxisDisplayLabel(XdfAxis? axis, int index, double[]? values)
+    {
+        XdfValueFormat displayFormat = axis != null
+            ? TryResolveAxisBreakpointTable(axis)?.ZAxis?.Format ?? axis.Format
+            : XdfValueFormat.Identity;
+
+        if (axis != null && values != null && index < values.Length)
+            return FormatDisplayValue(values[index], displayFormat);
+
+        if (axis != null && axis.Labels.TryGetValue(index, out string? label))
+            return label;
+
+        return index.ToString(CultureInfo.CurrentCulture);
     }
 
     // -----------------------------------------------------------------------
@@ -581,17 +835,38 @@ public partial class Form1 : Form
     private void DgvMap_CellEndEdit(object? sender, DataGridViewCellEventArgs e)
     {
         if (_bin == null || _selectedTable?.ZAxis == null) return;
-        var cell = dgvMap.Rows[e.RowIndex].Cells[e.ColumnIndex];
-        if (!double.TryParse(cell.Value?.ToString(), out double newValue)) return;
-
         var z = _selectedTable.ZAxis;
+
+        if (!CanEditValue(z.Format, z.ElementSizeBits))
+        {
+            RefreshDetailPanel();
+            return;
+        }
+
+        var cell = dgvMap.Rows[e.RowIndex].Cells[e.ColumnIndex];
+        if (!TryParseDisplayValue(cell.Value?.ToString(), z.Format, out double displayValue))
+        {
+            MessageBox.Show("Enter a valid value.", "Invalid Input",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            RefreshDetailPanel();
+            return;
+        }
+
         int absAddr   = _document!.BaseOffset + z.Address;
-        bool bigEndian = z.MajorStrideBits < 0;
         int elemBytes  = z.ElementSizeBits / 8;
         int cellIndex  = e.RowIndex * z.ColCount + e.ColumnIndex;
+        if (!TryConvertDisplayToRaw(displayValue, z.Format, z.ElementSizeBits, out double rawValue))
+        {
+            MessageBox.Show(
+                "This table uses a conversion formula that can't be written back yet.",
+                "Write Not Supported", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            RefreshDetailPanel();
+            return;
+        }
 
-        _bin.WriteCell(absAddr + cellIndex * elemBytes, z.ElementSizeBits, bigEndian, newValue);
+        _bin.WriteCell(absAddr + cellIndex * elemBytes, z.ElementSizeBits, z.Format, rawValue);
         UpdateTitleBar();
+        RefreshDetailPanel();
     }
 
     // -----------------------------------------------------------------------
@@ -601,18 +876,35 @@ public partial class Form1 : Form
     private void BtnApplyValue_Click(object? sender, EventArgs e)
     {
         if (_bin == null || _selectedConstant == null) return;
-        if (!double.TryParse(txtConstValue.Text, out double value))
+        if (!CanEditValue(_selectedConstant.Format, _selectedConstant.ElementSizeBits))
+        {
+            MessageBox.Show(
+                "This value uses a conversion formula that can't be written back yet.",
+                "Write Not Supported", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (!TryParseDisplayValue(txtConstValue.Text, _selectedConstant.Format, out double value))
         {
             MessageBox.Show("Enter a valid number.", "Invalid Input",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
+        if (!TryConvertDisplayToRaw(value, _selectedConstant.Format, _selectedConstant.ElementSizeBits, out double rawValue))
+        {
+            MessageBox.Show(
+                "This value uses a conversion formula that can't be written back yet.",
+                "Write Not Supported", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            RefreshDetailPanel();
+            return;
+        }
+
         int absAddr   = _document!.BaseOffset + _selectedConstant.Address;
-        bool bigEndian = _selectedConstant.ElementSizeBits > 8;
-        _bin.WriteCell(absAddr, _selectedConstant.ElementSizeBits, bigEndian, value);
+        _bin.WriteCell(absAddr, _selectedConstant.ElementSizeBits, _selectedConstant.Format, rawValue);
         UpdateTitleBar();
-        SetStatus($"Updated {_selectedConstant.Title} → {(long)value}");
+        RefreshDetailPanel();
+        SetStatus($"Updated {_selectedConstant.Title} → {FormatDisplayValue(value, _selectedConstant.Format)}");
     }
 
     // -----------------------------------------------------------------------
@@ -721,6 +1013,84 @@ public partial class Form1 : Form
     }
 
     // -----------------------------------------------------------------------
+    // 2D / 3D visualization
+    // -----------------------------------------------------------------------
+
+    private void LoadVisualizationViews(XdfTable table, double[] values)
+    {
+        int rows = table.ZAxis!.RowCount;
+        int cols = table.ZAxis.ColCount;
+        double[]? xVals = TryReadAxisValues(table.XAxis);
+        double[]? yVals = TryReadAxisValues(table.YAxis);
+        string[] displayValues = new string[values.Length];
+        for (int i = 0; i < values.Length; i++)
+            displayValues[i] = FormatDisplayValue(values[i], table.ZAxis.Format);
+
+        heatmapView.LoadData(values, rows, cols, xVals, yVals, displayValues);
+        surfacePlotView.LoadData(values, rows, cols, xVals, yVals);
+    }
+
+    private void BtnResetView3D_Click(object? sender, EventArgs e) => surfacePlotView.ResetView();
+
+    // -----------------------------------------------------------------------
+    // Search box — filter tree nodes
+    // -----------------------------------------------------------------------
+
+    private void SearchBox_TextChanged(object? sender, EventArgs e)
+    {
+        if (_document == null) return;
+
+        string search = searchBox.Text.Trim();
+        if (string.IsNullOrEmpty(search))
+        {
+            RefreshTree();
+            return;
+        }
+
+        object? selectedTag = treeView.SelectedNode?.Tag;
+        TreeNode? selectedNode = null;
+
+        treeView.BeginUpdate();
+        treeView.Nodes.Clear();
+
+        var tablesNode = new TreeNode("Tables")
+        {
+            NodeFont = new Font(treeView.Font, FontStyle.Bold)
+        };
+        foreach (var table in _document.Tables)
+        {
+            if (!TableMatchesSearch(table, search)) continue;
+            var node = new TreeNode(table.Title) { Tag = table };
+            tablesNode.Nodes.Add(node);
+            if (ReferenceEquals(table, selectedTag))
+                selectedNode = node;
+        }
+
+        var constantsNode = new TreeNode("Constants")
+        {
+            NodeFont = new Font(treeView.Font, FontStyle.Bold)
+        };
+        foreach (var constant in _document.Constants)
+        {
+            bool match = constant.Title.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                         (constant.Description?.Contains(search, StringComparison.OrdinalIgnoreCase) == true);
+            if (!match) continue;
+            var node = new TreeNode(constant.Title) { Tag = constant };
+            constantsNode.Nodes.Add(node);
+            if (ReferenceEquals(constant, selectedTag))
+                selectedNode = node;
+        }
+
+        if (tablesNode.Nodes.Count > 0) treeView.Nodes.Add(tablesNode);
+        if (constantsNode.Nodes.Count > 0) treeView.Nodes.Add(constantsNode);
+
+        treeView.ExpandAll();
+        treeView.EndUpdate();
+
+        if (selectedNode != null) treeView.SelectedNode = selectedNode;
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
@@ -732,6 +1102,97 @@ public partial class Form1 : Form
     }
 
     private void SetStatus(string message) => statusLabel.Text = message;
+
+    private static string GetEndianLabel(XdfValueFormat format) =>
+        format.IsLittleEndian ? "little-endian" : "big-endian";
+
+    private static bool CanEditValue(XdfValueFormat format, int elementSizeBits)
+    {
+        if ((format.OutputType ?? 0) == 4)
+            return false;
+
+        if (!XdfEquationEvaluator.IsSupported(format.MathEquation))
+            return false;
+
+        if (XdfEquationEvaluator.IsIdentity(format.MathEquation))
+            return true;
+
+        if (format.IsFloatingPoint)
+            return false;
+
+        return elementSizeBits is 8 or 16;
+    }
+
+    private static bool TryConvertDisplayToRaw(double displayValue, XdfValueFormat format, int elementSizeBits, out double rawValue)
+    {
+        if (XdfEquationEvaluator.IsIdentity(format.MathEquation))
+        {
+            rawValue = displayValue;
+            return true;
+        }
+
+        if (format.IsFloatingPoint)
+        {
+            rawValue = 0;
+            return false;
+        }
+
+        return XdfEquationEvaluator.TryInvertDiscrete(
+            format.MathEquation,
+            displayValue,
+            elementSizeBits,
+            format.IsSigned,
+            out rawValue);
+    }
+
+    private static bool TryParseDisplayValue(string? text, XdfValueFormat format, out double value)
+    {
+        value = 0;
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        string trimmed = text.Trim();
+        if ((format.OutputType ?? 0) == 3)
+        {
+            string hexText = trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+                ? trimmed[2..]
+                : trimmed;
+
+            if (long.TryParse(hexText, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out long hexValue))
+            {
+                value = hexValue;
+                return true;
+            }
+        }
+
+        return double.TryParse(trimmed, NumberStyles.Float | NumberStyles.AllowThousands,
+                   CultureInfo.CurrentCulture, out value) ||
+               double.TryParse(trimmed, NumberStyles.Float | NumberStyles.AllowThousands,
+                   CultureInfo.InvariantCulture, out value);
+    }
+
+    private static string FormatDisplayValue(double value, XdfValueFormat format)
+    {
+        int outputType = format.OutputType ?? 2;
+        if (outputType == 3 && Math.Abs(value) <= long.MaxValue)
+            return $"0x{(long)Math.Round(value):X}";
+
+        int? decimalPlaces = format.DecimalPlaces;
+        if (decimalPlaces.HasValue)
+        {
+            int places = Math.Clamp(decimalPlaces.Value, 0, 10);
+            double rounded = Math.Round(value, places, MidpointRounding.AwayFromZero);
+            return rounded.ToString($"F{places}", CultureInfo.CurrentCulture);
+        }
+
+        if (outputType == 1)
+            return value.ToString("G6", CultureInfo.CurrentCulture);
+
+        if (Math.Abs(value - Math.Round(value)) < 0.000001 && Math.Abs(value) <= long.MaxValue)
+            return ((long)Math.Round(value)).ToString(CultureInfo.CurrentCulture);
+
+        return value.ToString("G6", CultureInfo.CurrentCulture);
+    }
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
@@ -758,7 +1219,15 @@ public partial class Form1 : Form
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         if (!ConfirmDiscardBinChanges())
+        {
             e.Cancel = true;
+            return;
+        }
+
+        _isMainFormClosing = true;
+        if (_detachedDetailForm != null && !_detachedDetailForm.IsDisposed)
+            _detachedDetailForm.Close();
+
         base.OnFormClosing(e);
     }
 
@@ -773,6 +1242,7 @@ public partial class Form1 : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        _detachedDetailForm = null;
         _calibrAi.Dispose();
         base.OnFormClosed(e);
     }
@@ -795,6 +1265,7 @@ public partial class Form1 : Form
                     loadedXdf = true;
                     menuItemDetect.Enabled = true;
                     menuItemOpenBin.Enabled = true;
+                    btnToolOpenBin.Enabled = true;
                 }
                 catch (Exception ex)
                 {
@@ -818,6 +1289,8 @@ public partial class Form1 : Form
                     loadedBin = true;
                     menuItemSaveBin.Enabled = true;
                     menuItemSaveBinAs.Enabled = true;
+                    btnToolSave.Enabled = true;
+                    statusBinInfo.Text = $"{_bin.Length:N0} bytes";
                     UpdateTitleBar();
                 }
                 catch (Exception ex)

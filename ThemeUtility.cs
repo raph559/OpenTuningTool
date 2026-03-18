@@ -1,12 +1,13 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using OpenTuningTool.Controls;
 using OpenTuningTool.Models;
 
 namespace OpenTuningTool;
 
 public static class ThemeUtility
 {
-    private readonly struct ThemePalette
+    internal readonly struct ThemePalette
     {
         public ThemePalette(
             Color window,
@@ -68,6 +69,51 @@ public static class ThemeUtility
 
         form.Invalidate(true);
         form.Refresh();
+    }
+
+    /// <summary>
+    /// Returns the palette for a given theme. Used by custom controls to match theme colors.
+    /// </summary>
+    internal static ThemePalette GetPaletteFor(AppTheme theme) => GetPalette(theme);
+
+    /// <summary>
+    /// Converts a normalized value (0..1) to a heatmap color (blue → cyan → green → yellow → red).
+    /// </summary>
+    public static Color ValueToHeatColor(double normalized)
+    {
+        normalized = Math.Clamp(normalized, 0.0, 1.0);
+        // Map 0..1 to hue 240..0 (blue to red through green)
+        double hue = (1.0 - normalized) * 240.0;
+        return HsvToRgb(hue, 0.85, 0.95);
+    }
+
+    internal static Color Blend(Color a, Color b, float t)
+    {
+        t = Math.Clamp(t, 0f, 1f);
+        int r = (int)(a.R + ((b.R - a.R) * t));
+        int g = (int)(a.G + ((b.G - a.G) * t));
+        int bVal = (int)(a.B + ((b.B - a.B) * t));
+        return Color.FromArgb(r, g, bVal);
+    }
+
+    private static Color HsvToRgb(double h, double s, double v)
+    {
+        double c = v * s;
+        double x = c * (1 - Math.Abs((h / 60.0) % 2 - 1));
+        double m = v - c;
+        double r, g, b;
+
+        if (h < 60)       { r = c; g = x; b = 0; }
+        else if (h < 120) { r = x; g = c; b = 0; }
+        else if (h < 180) { r = 0; g = c; b = x; }
+        else if (h < 240) { r = 0; g = x; b = c; }
+        else if (h < 300) { r = x; g = 0; b = c; }
+        else               { r = c; g = 0; b = x; }
+
+        return Color.FromArgb(
+            (int)((r + m) * 255),
+            (int)((g + m) * 255),
+            (int)((b + m) * 255));
     }
 
     public static void ApplyDarkTitleBar(Form form) => ApplyTitleBarTheme(form, AppTheme.Dark);
@@ -158,6 +204,21 @@ public static class ThemeUtility
                 case Form form:
                     form.BackColor = palette.Window;
                     form.ForeColor = palette.Foreground;
+                    break;
+                case FlatTabControl flatTab:
+                    flatTab.ApplyThemeColors(palette.Window, palette.Surface, palette.Foreground, palette.Accent, palette.MutedForeground);
+                    break;
+                case StyledDataGridView styledGrid:
+                    styledGrid.ApplyThemeColors(palette.Window, palette.Surface, palette.Input, palette.Foreground, palette.Accent, palette.Grid);
+                    break;
+                case ModernSearchBox searchBox:
+                    searchBox.ApplyThemeColors(palette.Input, palette.Foreground, palette.Grid, palette.MutedForeground);
+                    break;
+                case HeatmapView heatmap:
+                    heatmap.ApplyThemeColors(palette.Window, palette.Foreground, palette.Grid, palette.Accent);
+                    break;
+                case SurfacePlotView surface:
+                    surface.ApplyThemeColors(palette.Window, palette.Foreground, palette.Grid, palette.Accent);
                     break;
                 case MenuStrip menuStrip:
                     menuStrip.BackColor = palette.Surface;
@@ -444,15 +505,6 @@ public static class ThemeUtility
 
         if ((e.State & DrawItemState.Focus) == DrawItemState.Focus)
             e.DrawFocusRectangle();
-    }
-
-    private static Color Blend(Color a, Color b, float t)
-    {
-        t = Math.Clamp(t, 0f, 1f);
-        int r = (int)(a.R + ((b.R - a.R) * t));
-        int g = (int)(a.G + ((b.G - a.G) * t));
-        int bVal = (int)(a.B + ((b.B - a.B) * t));
-        return Color.FromArgb(r, g, bVal);
     }
 
     private sealed class ComboBoxThemeState

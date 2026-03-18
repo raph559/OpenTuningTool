@@ -1,3 +1,4 @@
+using OpenTuningTool.Controls;
 using OpenTuningTool.Models;
 
 namespace OpenTuningTool.Forms;
@@ -9,9 +10,9 @@ public sealed class TableSearchForm : Form
 
     private readonly Label _lblSearch;
     private readonly TextBox _txtSearch;
-    private readonly ListView _listResults;
-    private readonly ColumnHeader _colTitle;
-    private readonly ColumnHeader _colDescription;
+    private readonly StyledDataGridView _gridResults;
+    private readonly DataGridViewTextBoxColumn _colTitle;
+    private readonly DataGridViewTextBoxColumn _colDescription;
     private readonly Label _lblCount;
     private readonly Button _btnOpen;
     private readonly Button _btnClose;
@@ -27,9 +28,9 @@ public sealed class TableSearchForm : Form
 
         _lblSearch = new Label();
         _txtSearch = new TextBox();
-        _listResults = new ListView();
-        _colTitle = new ColumnHeader();
-        _colDescription = new ColumnHeader();
+        _gridResults = new StyledDataGridView();
+        _colTitle = new DataGridViewTextBoxColumn();
+        _colDescription = new DataGridViewTextBoxColumn();
         _lblCount = new Label();
         _btnOpen = new Button();
         _btnClose = new Button();
@@ -52,36 +53,40 @@ public sealed class TableSearchForm : Form
         XdfTable? selectedTable = GetSelectedTable();
         IReadOnlyList<XdfTable> results = _searchTables(searchText);
 
-        _listResults.BeginUpdate();
-        _listResults.Items.Clear();
+        _gridResults.SuspendLayout();
+        _gridResults.Rows.Clear();
 
         foreach (XdfTable table in results)
         {
-            var item = new ListViewItem(table.Title) { Tag = table };
-            item.SubItems.Add(table.Description ?? string.Empty);
-            _listResults.Items.Add(item);
+            int rowIndex = _gridResults.Rows.Add(table.Title, table.Description ?? string.Empty);
+            _gridResults.Rows[rowIndex].Tag = table;
         }
 
-        if (_listResults.Items.Count > 0)
+        if (_gridResults.Rows.Count > 0)
         {
-            ListViewItem? preferredItem = null;
+            DataGridViewRow? preferredRow = null;
             if (selectedTable != null)
             {
-                foreach (ListViewItem item in _listResults.Items)
+                foreach (DataGridViewRow row in _gridResults.Rows)
                 {
-                    if (!ReferenceEquals(item.Tag, selectedTable)) continue;
-                    preferredItem = item;
+                    if (!ReferenceEquals(row.Tag, selectedTable)) continue;
+                    preferredRow = row;
                     break;
                 }
             }
 
-            preferredItem ??= _listResults.Items[0];
-            preferredItem.Selected = true;
-            preferredItem.Focused = true;
-            preferredItem.EnsureVisible();
+            preferredRow ??= _gridResults.Rows[0];
+            _gridResults.ClearSelection();
+            preferredRow.Selected = true;
+            _gridResults.CurrentCell = preferredRow.Cells[0];
+            _gridResults.FirstDisplayedScrollingRowIndex = preferredRow.Index;
+        }
+        else
+        {
+            _gridResults.ClearSelection();
         }
 
-        _listResults.EndUpdate();
+        _gridResults.ResumeLayout();
 
         int count = results.Count;
         _lblCount.Text = searchText.Length == 0
@@ -89,7 +94,7 @@ public sealed class TableSearchForm : Form
             : count == 0
             ? "No matching tables."
             : $"{count} matching table{(count == 1 ? string.Empty : "s")}.";
-        _btnOpen.Enabled = _listResults.SelectedItems.Count > 0;
+        _btnOpen.Enabled = _gridResults.SelectedRows.Count > 0;
     }
 
     private void InitializeComponent()
@@ -120,26 +125,39 @@ public sealed class TableSearchForm : Form
         _txtSearch.TextChanged += TxtSearch_TextChanged;
         _txtSearch.KeyDown += TxtSearch_KeyDown;
 
-        _listResults.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-        _listResults.Location = new Point(15, 50);
-        _listResults.Size = new Size(590, 210);
-        _listResults.FullRowSelect = true;
-        _listResults.GridLines = false;
-        _listResults.HideSelection = false;
-        _listResults.MultiSelect = false;
-        _listResults.View = View.Details;
-        _listResults.BackColor = bgPanel;
-        _listResults.ForeColor = fgLight;
-        _listResults.BorderStyle = BorderStyle.None;
-        _listResults.Font = new Font("Segoe UI", 9.5F);
-        _listResults.Columns.AddRange(new[] { _colTitle, _colDescription });
-        _listResults.SelectedIndexChanged += ListResults_SelectedIndexChanged;
-        _listResults.DoubleClick += ListResults_DoubleClick;
+        _gridResults.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+        _gridResults.Location = new Point(15, 50);
+        _gridResults.Size = new Size(590, 210);
+        _gridResults.AllowUserToAddRows = false;
+        _gridResults.AllowUserToDeleteRows = false;
+        _gridResults.AllowUserToResizeColumns = false;
+        _gridResults.AllowUserToResizeRows = false;
+        _gridResults.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        _gridResults.BackgroundColor = bgDark;
+        _gridResults.BorderStyle = BorderStyle.None;
+        _gridResults.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
+        _gridResults.EditMode = DataGridViewEditMode.EditProgrammatically;
+        _gridResults.MultiSelect = false;
+        _gridResults.ReadOnly = true;
+        _gridResults.RowHeadersVisible = false;
+        _gridResults.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+        _gridResults.DefaultCellStyle.WrapMode = DataGridViewTriState.False;
+        _gridResults.Font = new Font("Segoe UI", 9.5F);
+        _gridResults.Columns.AddRange(new DataGridViewColumn[] { _colTitle, _colDescription });
+        _gridResults.ApplyThemeColors(bgDark, bgPanel, bgControl, fgLight, accent, Color.FromArgb(60, 60, 60));
+        _gridResults.SelectionChanged += ListResults_SelectedIndexChanged;
+        _gridResults.CellDoubleClick += GridResults_CellDoubleClick;
 
-        _colTitle.Text = "Table";
-        _colTitle.Width = 200;
-        _colDescription.Text = "Description";
-        _colDescription.Width = 380;
+        _colTitle.Name = "Table";
+        _colTitle.HeaderText = "Table";
+        _colTitle.FillWeight = 36;
+        _colTitle.MinimumWidth = 160;
+        _colTitle.SortMode = DataGridViewColumnSortMode.NotSortable;
+        _colDescription.Name = "Description";
+        _colDescription.HeaderText = "Description";
+        _colDescription.FillWeight = 64;
+        _colDescription.MinimumWidth = 250;
+        _colDescription.SortMode = DataGridViewColumnSortMode.NotSortable;
 
         _lblCount.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
         _lblCount.AutoSize = true;
@@ -185,11 +203,13 @@ public sealed class TableSearchForm : Form
         {
             _lblSearch,
             _txtSearch,
-            _listResults,
+            _gridResults,
             _lblCount,
             _btnOpen,
             _btnClose
         });
+        AcceptButton = _btnOpen;
+        CancelButton = _btnClose;
 
         ResumeLayout(false);
         PerformLayout();
@@ -208,10 +228,14 @@ public sealed class TableSearchForm : Form
 
     private void ListResults_SelectedIndexChanged(object? sender, EventArgs e)
     {
-        _btnOpen.Enabled = _listResults.SelectedItems.Count > 0;
+        _btnOpen.Enabled = _gridResults.SelectedRows.Count > 0;
     }
 
-    private void ListResults_DoubleClick(object? sender, EventArgs e) => ActivateSelectedTable();
+    private void GridResults_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+    {
+        if (e.RowIndex >= 0)
+            ActivateSelectedTable();
+    }
 
     private void BtnOpen_Click(object? sender, EventArgs e) => ActivateSelectedTable();
 
@@ -228,7 +252,9 @@ public sealed class TableSearchForm : Form
 
     private XdfTable? GetSelectedTable()
     {
-        if (_listResults.SelectedItems.Count == 0) return null;
-        return _listResults.SelectedItems[0].Tag as XdfTable;
+        if (_gridResults.SelectedRows.Count > 0)
+            return _gridResults.SelectedRows[0].Tag as XdfTable;
+
+        return _gridResults.CurrentRow?.Tag as XdfTable;
     }
 }

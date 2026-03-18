@@ -8,8 +8,18 @@ public class XdfAxis
 	public int ElementSizeBits {get; }
 	public int MajorStrideBits {get; }
 	public int MinorStrideBits {get; }
+	public XdfValueFormat Format { get; }
+	public IReadOnlyDictionary<int, string> Labels { get; }
 
-	public XdfAxis(char id, int indexCount, int? address, int elementSizeBits, int majorStrideBits, int minorStrideBits)
+	public XdfAxis(
+		char id,
+		int indexCount,
+		int? address,
+		int elementSizeBits,
+		int majorStrideBits,
+		int minorStrideBits,
+		XdfValueFormat? format = null,
+		IReadOnlyDictionary<int, string>? labels = null)
 	{
 		Id = id;
 		IndexCount = indexCount;
@@ -17,5 +27,9 @@ public class XdfAxis
 		ElementSizeBits = elementSizeBits;
 		MajorStrideBits = majorStrideBits;
 		MinorStrideBits = minorStrideBits;
+		Format = format ?? XdfValueFormat.Identity;
+		Labels = labels != null
+			? new Dictionary<int, string>(labels)
+			: new Dictionary<int, string>();
 	}
 }
