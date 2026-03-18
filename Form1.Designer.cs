@@ -246,7 +246,7 @@ partial class Form1
         lblDetachedPlaceholder.ForeColor = fgLight;
         lblDetachedPlaceholder.Font = new Font("Segoe UI", 10F, FontStyle.Italic);
         lblDetachedPlaceholder.Padding = new Padding(0, 0, 0, 48);
-        lblDetachedPlaceholder.Text = "The data view is detached into its own window.";
+        lblDetachedPlaceholder.Text = "Open tables in their own windows to work on multiple maps side by side.";
 
         btnReattachDetail.Dock = DockStyle.Bottom;
         btnReattachDetail.Height = 32;
@@ -284,8 +284,8 @@ partial class Form1
         lblDetailTitle.ForeColor = accent;
 
         btnDetachDetail.Dock = DockStyle.Right;
-        btnDetachDetail.Width = 92;
-        btnDetachDetail.Text = "Detach";
+        btnDetachDetail.Width = 112;
+        btnDetachDetail.Text = "New Window";
         btnDetachDetail.FlatStyle = FlatStyle.Flat;
         btnDetachDetail.FlatAppearance.BorderSize = 0;
         btnDetachDetail.BackColor = bgPanel;

@@ -18,6 +18,7 @@ public partial class Form1 : Form
     private TableSearchForm? _tableSearchForm;
     private Form? _detachedDetailForm;
     private bool _isMainFormClosing;
+    private readonly Dictionary<int, TableEditorForm> _tableEditorForms = [];
     private readonly CalibrAiClient _calibrAi = new();
 
     public Form1()
@@ -78,6 +79,15 @@ public partial class Form1 : Form
             ThemeUtility.ApplyUiDensity(_tableSearchForm, _settings.UiDensity);
         }
 
+        foreach (KeyValuePair<int, TableEditorForm> entry in _tableEditorForms.ToArray())
+        {
+            TableEditorForm editor = entry.Value;
+            if (editor.IsDisposed)
+                continue;
+
+            editor.ApplyAppearance(_settings.Theme, _settings.UiDensity);
+        }
+
         if (_detachedDetailForm != null && !_detachedDetailForm.IsDisposed)
         {
             ThemeUtility.ApplyTheme(_detachedDetailForm, _settings.Theme);
@@ -123,6 +133,7 @@ public partial class Form1 : Form
         try
         {
             _document = await Task.Run(() => new XdfParser().Parse(path));
+            CloseAllTableEditorWindows();
             _settings.LastXdfPath = path;
             SaveSettingsQuietly();
             ClearDetailPanel();
@@ -178,6 +189,8 @@ public partial class Form1 : Form
             UpdateTitleBar();
             statusBinInfo.Text = $"{_bin.Length:N0} bytes";
             SetStatus($"BIN loaded: {Path.GetFileName(dlg.FileName)}  ({_bin.Length:N0} bytes)");
+
+            RefreshOpenTableEditorWindows();
 
             // Refresh detail panel to show values
             RefreshDetailPanel();
@@ -406,15 +419,12 @@ public partial class Form1 : Form
         }
     }
 
-    private bool IsDetailDetached => panelDetail.Parent != splitContainer.Panel2;
-
     private void BtnDetachDetail_Click(object? sender, EventArgs e)
     {
-        if (IsDetailDetached) AttachDetailPanel();
-        else DetachDetailPanel();
+        OpenSelectedTableEditorWindow();
     }
 
-    private void BtnReattachDetail_Click(object? sender, EventArgs e) => AttachDetailPanel();
+    private void BtnReattachDetail_Click(object? sender, EventArgs e) => OpenSelectedTableEditorWindow();
 
     private void DetachDetailPanel()
     {
@@ -503,10 +513,11 @@ public partial class Form1 : Form
 
     private void UpdateDetailDetachUi()
     {
-        bool detached = IsDetailDetached;
-        btnDetachDetail.Text = detached ? "Dock" : "Detach";
-        btnReattachDetail.Visible = detached;
-        panelDetachedPlaceholder.Visible = detached;
+        bool canOpenTableWindow = _selectedTable?.ZAxis != null && _document != null && _bin != null;
+        btnDetachDetail.Text = "New Window";
+        btnDetachDetail.Enabled = canOpenTableWindow;
+        btnReattachDetail.Visible = false;
+        panelDetachedPlaceholder.Visible = false;
     }
 
     private void UpdateDetachedDetailWindowTitle()
@@ -516,6 +527,117 @@ public partial class Form1 : Form
 
         string detailName = _selectedTable?.Title ?? _selectedConstant?.Title ?? "Data View";
         _detachedDetailForm.Text = $"Data View — {detailName}";
+    }
+
+    private void OpenSelectedTableEditorWindow()
+    {
+        if (_selectedTable?.ZAxis == null || _document == null || _bin == null)
+            return;
+
+        if (_tableEditorForms.TryGetValue(_selectedTable.UniqueId, out TableEditorForm? existingEditor))
+        {
+            if (!existingEditor.IsDisposed)
+            {
+                existingEditor.UpdateDataSource(_document, _bin);
+                existingEditor.RefreshData();
+                if (!existingEditor.Visible)
+                    existingEditor.Show(this);
+
+                existingEditor.BringToFront();
+                existingEditor.Activate();
+                return;
+            }
+
+            _tableEditorForms.Remove(_selectedTable.UniqueId);
+        }
+
+        var editor = new TableEditorForm(
+            _document,
+            _bin,
+            _selectedTable,
+            _settings.Theme,
+            _settings.UiDensity,
+            GetDefaultTableViewIndex(),
+            HandleTableDataChanged);
+
+        PositionTableEditorWindow(editor);
+        editor.FormClosed += TableEditorForm_FormClosed;
+        _tableEditorForms[_selectedTable.UniqueId] = editor;
+        editor.Show(this);
+        editor.BringToFront();
+        editor.Activate();
+    }
+
+    private void PositionTableEditorWindow(Form editor)
+    {
+        Rectangle ownerBounds = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+        Rectangle workingArea = Screen.FromRectangle(ownerBounds).WorkingArea;
+        int cascadeOffset = 28 * (_tableEditorForms.Count % 8);
+        editor.StartPosition = FormStartPosition.Manual;
+
+        int desiredX = ownerBounds.Left + 40 + cascadeOffset;
+        int desiredY = ownerBounds.Top + 40 + cascadeOffset;
+        int maxX = Math.Max(workingArea.Left, workingArea.Right - editor.Width);
+        int maxY = Math.Max(workingArea.Top, workingArea.Bottom - editor.Height);
+
+        editor.Location = new Point(
+            Math.Clamp(desiredX, workingArea.Left, maxX),
+            Math.Clamp(desiredY, workingArea.Top, maxY));
+    }
+
+    private void TableEditorForm_FormClosed(object? sender, FormClosedEventArgs e)
+    {
+        if (sender is not TableEditorForm editor)
+            return;
+
+        _tableEditorForms.Remove(editor.Table.UniqueId);
+    }
+
+    private void RefreshOpenTableEditorWindows()
+    {
+        if (_document == null)
+            return;
+
+        foreach (KeyValuePair<int, TableEditorForm> entry in _tableEditorForms.ToArray())
+        {
+            int uniqueId = entry.Key;
+            TableEditorForm editor = entry.Value;
+            if (editor.IsDisposed)
+            {
+                _tableEditorForms.Remove(uniqueId);
+                continue;
+            }
+
+            editor.UpdateDataSource(_document, _bin);
+            editor.RefreshData();
+        }
+    }
+
+    private void CloseAllTableEditorWindows()
+    {
+        foreach (KeyValuePair<int, TableEditorForm> entry in _tableEditorForms.ToArray())
+        {
+            int uniqueId = entry.Key;
+            TableEditorForm editor = entry.Value;
+            editor.FormClosed -= TableEditorForm_FormClosed;
+            if (!editor.IsDisposed)
+                editor.Close();
+
+            _tableEditorForms.Remove(uniqueId);
+        }
+    }
+
+    private void HandleTableDataChanged(XdfTable? table)
+    {
+        if (table == null)
+            return;
+
+        UpdateTitleBar();
+        if (_selectedTable != null || _selectedConstant != null)
+            RefreshDetailPanel();
+
+        RefreshOpenTableEditorWindows();
+        SetStatus($"Updated {table.Title}");
     }
 
     // -----------------------------------------------------------------------
@@ -590,7 +712,7 @@ public partial class Form1 : Form
         else lblDataValue.Text = "(none)";
 
         panelDetail.Visible = true;
-        UpdateDetachedDetailWindowTitle();
+        UpdateDetailDetachUi();
 
         // Values area
         if (_bin != null && table.ZAxis != null)
@@ -654,7 +776,7 @@ public partial class Form1 : Form
         lblDataLabel.Visible = true; lblDataValue.Visible = true;
 
         panelDetail.Visible = true;
-        UpdateDetachedDetailWindowTitle();
+        UpdateDetailDetachUi();
 
         // Values area
         if (_bin != null)
@@ -690,7 +812,7 @@ public partial class Form1 : Form
         _selectedTable    = null;
         _selectedConstant = null;
         panelDetail.Visible = false;
-        UpdateDetachedDetailWindowTitle();
+        UpdateDetailDetachUi();
     }
 
     // -----------------------------------------------------------------------
@@ -894,8 +1016,7 @@ public partial class Form1 : Form
         }
 
         _bin.WriteCell(absAddr + cellIndex * elemBytes, z.ElementSizeBits, z.Format, rawValue);
-        UpdateTitleBar();
-        RefreshDetailPanel();
+        HandleTableDataChanged(_selectedTable);
     }
 
     // -----------------------------------------------------------------------
@@ -1270,6 +1391,7 @@ public partial class Form1 : Form
         }
 
         _isMainFormClosing = true;
+        CloseAllTableEditorWindows();
         if (_detachedDetailForm != null && !_detachedDetailForm.IsDisposed)
             _detachedDetailForm.Close();
 
