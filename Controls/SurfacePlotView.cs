@@ -274,7 +274,7 @@ public sealed class SurfacePlotView : UserControl
         using var hintFont  = new Font("Segoe UI", 7.5f);
         using var hintBrush = new SolidBrush(Color.FromArgb(80, _fgColor));
         g.DrawString(
-            "Right-drag orbit  ·  Ctrl+click select  ·  Ctrl+drag multi-select  ·  Drag point to edit  ·  Wheel zoom  ·  Dbl-click reset",
+            "Right-drag orbit  ·  Ctrl+click select  ·  Ctrl+drag multi-select  ·  Drag point to edit  ·  Wheel zoom",
             hintFont, hintBrush, 8f, Height - 18f);
     }
 
@@ -473,7 +473,14 @@ public sealed class SurfacePlotView : UserControl
         base.OnMouseDoubleClick(e);
         if (e.Button != MouseButtons.Left) return;
 
-        ResetView();
+        int idx = FindNearestPoint(e.Location, 14f);
+        if (idx < 0 || idx >= _values.Length) return;
+
+        _selectedIndices.Clear();
+        _selectedIndices.Add(idx);
+        Invalidate();
+        SelectionChanged?.Invoke(_selectedIndices);
+        PointActivated?.Invoke(this, CreateEventArgs(idx));
     }
 
     protected override void OnMouseWheel(MouseEventArgs e)
