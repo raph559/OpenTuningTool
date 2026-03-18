@@ -274,7 +274,7 @@ public sealed class SurfacePlotView : UserControl
         using var hintFont  = new Font("Segoe UI", 7.5f);
         using var hintBrush = new SolidBrush(Color.FromArgb(80, _fgColor));
         g.DrawString(
-            "Right-drag orbit  ·  Left-click select  ·  Drag point to edit  ·  Wheel zoom  ·  Dbl-click reset",
+            "Right-drag orbit  ·  Ctrl+click select  ·  Ctrl+drag multi-select  ·  Drag point to edit  ·  Wheel zoom  ·  Dbl-click reset",
             hintFont, hintBrush, 8f, Height - 18f);
     }
 
@@ -451,25 +451,18 @@ public sealed class SurfacePlotView : UserControl
         }
         else
         {
-            // Simple click
-            if (!ModifierKeys.HasFlag(Keys.Control))
-            {
-                _selectedIndices.Clear();
-                if (_pendingDragIndex >= 0)
-                    _selectedIndices.Add(_pendingDragIndex);
-            }
-            else if (_pendingDragIndex >= 0)
+            // Simple click - only select if Ctrl is held
+            if (ModifierKeys.HasFlag(Keys.Control) && _pendingDragIndex >= 0)
             {
                 if (!_selectedIndices.Remove(_pendingDragIndex))
                     _selectedIndices.Add(_pendingDragIndex);
+                Invalidate();
+                SelectionChanged?.Invoke(_selectedIndices);
+
+                // Fire legacy single-point event
+                if (_pendingDragIndex < _values.Length)
+                    PointSelected?.Invoke(this, CreateEventArgs(_pendingDragIndex));
             }
-
-            Invalidate();
-            SelectionChanged?.Invoke(_selectedIndices);
-
-            // Fire legacy single-point event
-            if (_pendingDragIndex >= 0 && _pendingDragIndex < _values.Length)
-                PointSelected?.Invoke(this, CreateEventArgs(_pendingDragIndex));
         }
 
         _pendingDragIndex = -1;
@@ -480,14 +473,7 @@ public sealed class SurfacePlotView : UserControl
         base.OnMouseDoubleClick(e);
         if (e.Button != MouseButtons.Left) return;
 
-        int idx = FindNearestPoint(e.Location, 14f);
-        if (idx < 0 || idx >= _values.Length) return;
-
-        _selectedIndices.Clear();
-        _selectedIndices.Add(idx);
-        Invalidate();
-        SelectionChanged?.Invoke(_selectedIndices);
-        PointActivated?.Invoke(this, CreateEventArgs(idx));
+        ResetView();
     }
 
     protected override void OnMouseWheel(MouseEventArgs e)
