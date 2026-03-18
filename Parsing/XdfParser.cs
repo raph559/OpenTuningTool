@@ -12,6 +12,19 @@ public class XdfParser
 		XDocument doc = XDocument.Load(filePath);
 		XdfDocument xdf = new XdfDocument();
 
+		// Parse base offset from XDFHEADER
+		XElement? header = doc.Root?.Element("XDFHEADER");
+		if (header != null)
+		{
+			XElement? baseOffsetEl = header.Element("BASEOFFSET");
+			if (baseOffsetEl != null)
+			{
+				int offset   = baseOffsetEl.ParseNullableIntAttribute("offset")   ?? 0;
+				int subtract = baseOffsetEl.ParseNullableIntAttribute("subtract") ?? 0;
+				xdf.SetBaseOffset(subtract != 0 ? -offset : offset);
+			}
+		}
+
 		// Parse tables
 		IEnumerable<XElement> rawTables = doc.Descendants("XDFTABLE");
 		foreach (XElement rawTable in rawTables)

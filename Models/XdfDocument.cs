@@ -10,6 +10,14 @@ public class XdfDocument
 	public IReadOnlyList<XdfConstant> Constants => _constants;
 	public IReadOnlyDictionary<int, List<XdfObject>> Objects => _objectsById;
 
+	/// <summary>
+	/// File-byte offset to add to every raw XDF address to get the actual byte
+	/// position inside the BIN file.  Parsed from XDFHEADER/BASEOFFSET.
+	/// </summary>
+	public int BaseOffset { get; private set; }
+
+	internal void SetBaseOffset(int baseOffset) => BaseOffset = baseOffset;
+
 	public XdfDocument()
 	{
 		_tables = new List<XdfTable>();
