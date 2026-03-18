@@ -77,7 +77,7 @@ public sealed class SurfacePlotView : UserControl
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
                  ControlStyles.DoubleBuffer | ControlStyles.ResizeRedraw |
                  ControlStyles.OptimizedDoubleBuffer, true);
-        Cursor = Cursors.Default;
+        Cursor = Cursors.SizeAll;
     }
 
     public void LoadData(double[] values, int rows, int cols, double[]? xLabels, double[]? yLabels)
@@ -290,7 +290,7 @@ public sealed class SurfacePlotView : UserControl
         {
             _isOrbiting     = true;
             _orbitLastMouse = e.Location;
-            Cursor          = Cursors.Hand;
+            Cursor          = Cursors.SizeAll;
         }
         else if (e.Button == MouseButtons.Left && _hasData)
         {
@@ -325,16 +325,25 @@ public sealed class SurfacePlotView : UserControl
 
             if (pastThreshold && !_isValueDragging && !_isBoxSelecting)
             {
-                if (_pendingDragIndex >= 0)
+                // Only allow dragging if the point is already selected (clicked once)
+                if (_pendingDragIndex >= 0 && _selectedIndices.Contains(_pendingDragIndex))
                 {
                     _isValueDragging = true;
                     _dragBaseValues  = (double[])_values.Clone();
                     Cursor           = Cursors.SizeNS;
                 }
-                else
+                else if (_pendingDragIndex < 0)
                 {
                     _isBoxSelecting = true;
                     Cursor          = Cursors.Cross;
+                }
+                else
+                {
+                    // If clicking on an unselected point or whitespace, treat as orbit/rotation
+                    _isOrbiting = true;
+                    _orbitLastMouse = _leftDragStart;
+                    Cursor = Cursors.SizeAll;
+                    return;
                 }
             }
 
@@ -376,12 +385,10 @@ public sealed class SurfacePlotView : UserControl
             int r = nearest / _cols;
             int c = nearest % _cols;
             _tooltip.SetToolTip(this, $"[{r},{c}] = {_values[nearest]:G6}");
-            Cursor = Cursors.Hand;
         }
         else
         {
             _tooltip.SetToolTip(this, string.Empty);
-            Cursor = Cursors.Default;
         }
     }
 
@@ -389,10 +396,10 @@ public sealed class SurfacePlotView : UserControl
     {
         base.OnMouseUp(e);
 
-        if (e.Button == MouseButtons.Right && _isOrbiting)
+        if (_isOrbiting && (e.Button == MouseButtons.Right || e.Button == MouseButtons.Left))
         {
             _isOrbiting = false;
-            Cursor       = Cursors.Default;
+            Cursor      = Cursors.SizeAll;
             return;
         }
 
@@ -401,7 +408,7 @@ public sealed class SurfacePlotView : UserControl
         if (_isValueDragging)
         {
             _isValueDragging = false;
-            Cursor = Cursors.Default;
+            Cursor = Cursors.SizeAll;
 
             IEnumerable<int> targets = _selectedIndices.Count > 0
                 ? _selectedIndices
@@ -416,7 +423,7 @@ public sealed class SurfacePlotView : UserControl
         else if (_isBoxSelecting)
         {
             _isBoxSelecting = false;
-            Cursor = Cursors.Default;
+            Cursor = Cursors.SizeAll;
 
             if (!ModifierKeys.HasFlag(Keys.Control))
                 _selectedIndices.Clear();
