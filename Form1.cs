@@ -1,3 +1,4 @@
+using OpenTuningTool.Controls;
 using OpenTuningTool.Forms;
 using OpenTuningTool.Models;
 using OpenTuningTool.Parsing;
@@ -25,6 +26,10 @@ public partial class Form1 : Form
     {
         _settings = AppSettingsStore.Load();
         InitializeComponent();
+        heatmapView.CellSelected += HeatmapView_CellSelected;
+        heatmapView.CellActivated += HeatmapView_CellActivated;
+        surfacePlotView.PointSelected += SurfacePlotView_PointSelected;
+        surfacePlotView.PointActivated += SurfacePlotView_PointActivated;
         ApplySettingsToUi();
     }
 
@@ -830,6 +835,15 @@ public partial class Form1 : Form
             TableEditorSupport.FitMapGridToViewport(dgvMap);
     }
 
+    private void HeatmapView_CellSelected(object? sender, HeatmapCellEventArgs e) => SelectMapCell(e.Row, e.Col);
+
+    private void HeatmapView_CellActivated(object? sender, HeatmapCellEventArgs e) => EditSelectedTableCell(e.Row, e.Col, e.DisplayValue);
+
+    private void SurfacePlotView_PointSelected(object? sender, SurfacePointEventArgs e) => SelectMapCell(e.Row, e.Col);
+
+    private void SurfacePlotView_PointActivated(object? sender, SurfacePointEventArgs e) =>
+        EditSelectedTableCell(e.Row, e.Col, GetGridCellDisplayValue(e.Row, e.Col));
+
     private double[]? TryReadAxisValues(XdfAxis? axis)
     {
         if (_bin == null || _document == null || axis == null)
@@ -909,37 +923,23 @@ public partial class Form1 : Form
 
     private void DgvMap_CellEndEdit(object? sender, DataGridViewCellEventArgs e)
     {
-        if (_bin == null || _selectedTable?.ZAxis == null) return;
-        var z = _selectedTable.ZAxis;
-
-        if (!CanEditValue(z.Format, z.ElementSizeBits))
-        {
-            RefreshDetailPanel();
-            return;
-        }
+        if (_bin == null || _selectedTable == null || e.RowIndex < 0 || e.ColumnIndex < 0) return;
 
         var cell = dgvMap.Rows[e.RowIndex].Cells[e.ColumnIndex];
-        if (!TryParseDisplayValue(cell.Value?.ToString(), z.Format, out double displayValue))
+        if (!TableEditorSupport.TryWriteTableCellValue(
+                _document!,
+                _bin,
+                _selectedTable,
+                e.RowIndex,
+                e.ColumnIndex,
+                cell.Value?.ToString(),
+                out string errorMessage))
         {
-            MessageBox.Show("Enter a valid value.", "Invalid Input",
+            MessageBox.Show(errorMessage, "Update Failed",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
             RefreshDetailPanel();
             return;
         }
-
-        int absAddr   = _document!.BaseOffset + z.Address;
-        int elemBytes  = z.ElementSizeBits / 8;
-        int cellIndex  = e.RowIndex * z.ColCount + e.ColumnIndex;
-        if (!TryConvertDisplayToRaw(displayValue, z.Format, z.ElementSizeBits, out double rawValue))
-        {
-            MessageBox.Show(
-                "This table uses a conversion formula that can't be written back yet.",
-                "Write Not Supported", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            RefreshDetailPanel();
-            return;
-        }
-
-        _bin.WriteCell(absAddr + cellIndex * elemBytes, z.ElementSizeBits, z.Format, rawValue);
         HandleTableDataChanged(_selectedTable);
     }
 
@@ -1105,6 +1105,51 @@ public partial class Form1 : Form
     }
 
     private void BtnResetView3D_Click(object? sender, EventArgs e) => surfacePlotView.ResetView();
+
+    private void SelectMapCell(int row, int col)
+    {
+        if (row < 0 || col < 0 || row >= dgvMap.Rows.Count || col >= dgvMap.Columns.Count)
+            return;
+
+        dgvMap.ClearSelection();
+        dgvMap.CurrentCell = dgvMap.Rows[row].Cells[col];
+        dgvMap.Rows[row].Cells[col].Selected = true;
+    }
+
+    private void EditSelectedTableCell(int row, int col, string initialValue)
+    {
+        if (_bin == null || _selectedTable == null || _document == null)
+            return;
+
+        SelectMapCell(row, col);
+
+        using var dialog = new ValueEditDialog(
+            "Edit Table Value",
+            $"Cell [{row}, {col}]",
+            string.IsNullOrWhiteSpace(initialValue) ? GetGridCellDisplayValue(row, col) : initialValue,
+            _settings.Theme,
+            _settings.UiDensity);
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+            return;
+
+        if (!TableEditorSupport.TryWriteTableCellValue(_document, _bin, _selectedTable, row, col, dialog.ValueText, out string errorMessage))
+        {
+            MessageBox.Show(errorMessage, "Update Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            RefreshDetailPanel();
+            return;
+        }
+
+        HandleTableDataChanged(_selectedTable);
+    }
+
+    private string GetGridCellDisplayValue(int row, int col)
+    {
+        if (row < 0 || col < 0 || row >= dgvMap.Rows.Count || col >= dgvMap.Columns.Count)
+            return string.Empty;
+
+        return Convert.ToString(dgvMap.Rows[row].Cells[col].FormattedValue ?? dgvMap.Rows[row].Cells[col].Value) ?? string.Empty;
+    }
 
     // -----------------------------------------------------------------------
     // Search box — filter tree nodes

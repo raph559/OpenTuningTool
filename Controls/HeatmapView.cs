@@ -2,6 +2,13 @@ using System.Drawing.Drawing2D;
 
 namespace OpenTuningTool.Controls;
 
+public sealed class HeatmapCellEventArgs(int row, int col, string displayValue) : EventArgs
+{
+    public int Row { get; } = row;
+    public int Col { get; } = col;
+    public string DisplayValue { get; } = displayValue;
+}
+
 public sealed class HeatmapView : UserControl
 {
     private readonly record struct HeatmapLayout(
@@ -25,6 +32,8 @@ public sealed class HeatmapView : UserControl
 
     private int _hoveredRow = -1;
     private int _hoveredCol = -1;
+    private int _selectedRow = -1;
+    private int _selectedCol = -1;
 
     private float _zoomFactor = 1.0f;
     private const float MinZoom = 0.5f;
@@ -54,6 +63,9 @@ public sealed class HeatmapView : UserControl
 
     private readonly ToolTip _tooltip = new() { InitialDelay = 100, ReshowDelay = 50 };
     private string _lastTooltip = string.Empty;
+
+    public event EventHandler<HeatmapCellEventArgs>? CellSelected;
+    public event EventHandler<HeatmapCellEventArgs>? CellActivated;
 
     public HeatmapView()
     {
@@ -161,7 +173,12 @@ public sealed class HeatmapView : UserControl
                 g.DrawString(GetDisplayValue(idx), valueFont, textBrush, textBounds, valueFormat);
 
                 // Hover highlight
-                if (r == _hoveredRow && c == _hoveredCol)
+                if (r == _selectedRow && c == _selectedCol)
+                {
+                    using var selectedPen = new Pen(_accentColor, 3f);
+                    g.DrawRectangle(selectedPen, x + 1.5f, y + 1.5f, cellW - 3f, cellH - 3f);
+                }
+                else if (r == _hoveredRow && c == _hoveredCol)
                 {
                     using var hoverPen = new Pen(_accentColor, 2f);
                     g.DrawRectangle(hoverPen, x + 1, y + 1, cellW - 2, cellH - 2);
@@ -300,6 +317,32 @@ public sealed class HeatmapView : UserControl
         {
             base.OnMouseWheel(e);
         }
+    }
+
+    protected override void OnMouseClick(MouseEventArgs e)
+    {
+        base.OnMouseClick(e);
+        if (e.Button != MouseButtons.Left)
+            return;
+
+        if (!TryGetCellFromPoint(e.Location, out int row, out int col))
+            return;
+
+        SelectCell(row, col);
+        CellSelected?.Invoke(this, new HeatmapCellEventArgs(row, col, GetDisplayValue((row * _cols) + col)));
+    }
+
+    protected override void OnMouseDoubleClick(MouseEventArgs e)
+    {
+        base.OnMouseDoubleClick(e);
+        if (e.Button != MouseButtons.Left)
+            return;
+
+        if (!TryGetCellFromPoint(e.Location, out int row, out int col))
+            return;
+
+        SelectCell(row, col);
+        CellActivated?.Invoke(this, new HeatmapCellEventArgs(row, col, GetDisplayValue((row * _cols) + col)));
     }
 
     private float GetCellWidth()
@@ -444,5 +487,33 @@ public sealed class HeatmapView : UserControl
         float legendX = originX + contentWidth + LegendGap;
 
         return new HeatmapLayout(originX, originY, cellWidth, cellHeight, legendX, originY, contentHeight);
+    }
+
+    private bool TryGetCellFromPoint(Point location, out int row, out int col)
+    {
+        row = -1;
+        col = -1;
+        if (!_hasData)
+            return false;
+
+        HeatmapLayout layout = CalculateLayout();
+        float mx = location.X - layout.OriginX;
+        float my = location.Y - layout.OriginY;
+        if (mx < 0 || my < 0)
+            return false;
+
+        col = (int)(mx / layout.CellWidth);
+        row = (int)(my / layout.CellHeight);
+        return row >= 0 && row < _rows && col >= 0 && col < _cols;
+    }
+
+    private void SelectCell(int row, int col)
+    {
+        if (_selectedRow == row && _selectedCol == col)
+            return;
+
+        _selectedRow = row;
+        _selectedCol = col;
+        Invalidate();
     }
 }

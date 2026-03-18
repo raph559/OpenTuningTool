@@ -329,6 +329,54 @@ internal static class TableEditorSupport
             out rawValue);
     }
 
+    public static bool TryWriteTableCellValue(
+        XdfDocument document,
+        BinBuffer bin,
+        XdfTable table,
+        int rowIndex,
+        int columnIndex,
+        string? text,
+        out string errorMessage)
+    {
+        errorMessage = string.Empty;
+        if (table.ZAxis == null)
+        {
+            errorMessage = "No table data is defined for this entry.";
+            return false;
+        }
+
+        XdfTableData z = table.ZAxis;
+        if (rowIndex < 0 || rowIndex >= z.RowCount || columnIndex < 0 || columnIndex >= z.ColCount)
+        {
+            errorMessage = "The selected cell is out of range.";
+            return false;
+        }
+
+        if (!CanEditValue(z.Format, z.ElementSizeBits))
+        {
+            errorMessage = "This table uses a conversion formula that can't be written back yet.";
+            return false;
+        }
+
+        if (!TryParseDisplayValue(text, z.Format, out double displayValue))
+        {
+            errorMessage = "Enter a valid value.";
+            return false;
+        }
+
+        if (!TryConvertDisplayToRaw(displayValue, z.Format, z.ElementSizeBits, out double rawValue))
+        {
+            errorMessage = "This table uses a conversion formula that can't be written back yet.";
+            return false;
+        }
+
+        int absAddr = document.BaseOffset + z.Address;
+        int elemBytes = z.ElementSizeBits / 8;
+        int cellIndex = rowIndex * z.ColCount + columnIndex;
+        bin.WriteCell(absAddr + (cellIndex * elemBytes), z.ElementSizeBits, z.Format, rawValue);
+        return true;
+    }
+
     public static bool TryParseDisplayValue(string? text, XdfValueFormat format, out double value)
     {
         value = 0;

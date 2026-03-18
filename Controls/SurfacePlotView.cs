@@ -2,6 +2,13 @@ using System.Drawing.Drawing2D;
 
 namespace OpenTuningTool.Controls;
 
+public sealed class SurfacePointEventArgs(int row, int col, double value) : EventArgs
+{
+    public int Row { get; } = row;
+    public int Col { get; } = col;
+    public double Value { get; } = value;
+}
+
 public sealed class SurfacePlotView : UserControl
 {
     private double[] _values = [];
@@ -24,6 +31,8 @@ public sealed class SurfacePlotView : UserControl
     // Mouse drag
     private bool _isDragging;
     private Point _lastMouse;
+    private Point _mouseDownLocation;
+    private bool _dragExceededClickThreshold;
 
     // Theme colors
     private Color _bgColor = Color.FromArgb(30, 30, 30);
@@ -37,6 +46,10 @@ public sealed class SurfacePlotView : UserControl
     // Cached projection
     private PointF[]? _projectedPoints;
     private double[]? _normalizedValues;
+    private int _selectedIndex = -1;
+
+    public event EventHandler<SurfacePointEventArgs>? PointSelected;
+    public event EventHandler<SurfacePointEventArgs>? PointActivated;
 
     public SurfacePlotView()
     {
@@ -221,6 +234,15 @@ public sealed class SurfacePlotView : UserControl
 
         DrawCubeFrame(g, cx, cy, scale, cosX, sinX, cosY, sinY);
         DrawAxisOverlay(g, cx, cy, scale, cosX, sinX, cosY, sinY);
+
+        if (_selectedIndex >= 0 && _projectedPoints != null && _selectedIndex < _projectedPoints.Length)
+        {
+            PointF selectedPoint = _projectedPoints[_selectedIndex];
+            using var selectedPen = new Pen(_accentColor, 2.5f);
+            using var selectedBrush = new SolidBrush(Color.FromArgb(230, _accentColor));
+            g.FillEllipse(selectedBrush, selectedPoint.X - 4f, selectedPoint.Y - 4f, 8f, 8f);
+            g.DrawEllipse(selectedPen, selectedPoint.X - 7f, selectedPoint.Y - 7f, 14f, 14f);
+        }
     }
 
     private void DrawCubeGuides(Graphics g, float cx, float cy, float scale,
@@ -399,6 +421,8 @@ public sealed class SurfacePlotView : UserControl
         {
             _isDragging = true;
             _lastMouse = e.Location;
+            _mouseDownLocation = e.Location;
+            _dragExceededClickThreshold = false;
             Cursor = Cursors.Hand;
         }
     }
@@ -411,6 +435,13 @@ public sealed class SurfacePlotView : UserControl
         {
             int dx = e.X - _lastMouse.X;
             int dy = e.Y - _lastMouse.Y;
+            if (!_dragExceededClickThreshold)
+            {
+                int clickDx = e.X - _mouseDownLocation.X;
+                int clickDy = e.Y - _mouseDownLocation.Y;
+                _dragExceededClickThreshold = (clickDx * clickDx) + (clickDy * clickDy) > 25;
+            }
+
             _rotY += dx * 0.5;
             _rotX += dy * 0.5;
             _rotX = Math.Clamp(_rotX, -89, 89);
@@ -453,9 +484,28 @@ public sealed class SurfacePlotView : UserControl
         base.OnMouseUp(e);
         if (e.Button == MouseButtons.Left)
         {
+            if (!_dragExceededClickThreshold && TryGetNearestPointIndex(e.Location, out int selectedIndex))
+            {
+                SelectPoint(selectedIndex);
+                PointSelected?.Invoke(this, CreateEventArgs(selectedIndex));
+            }
+
             _isDragging = false;
             Cursor = Cursors.SizeAll;
         }
+    }
+
+    protected override void OnMouseDoubleClick(MouseEventArgs e)
+    {
+        base.OnMouseDoubleClick(e);
+        if (e.Button != MouseButtons.Left)
+            return;
+
+        if (!TryGetNearestPointIndex(e.Location, out int selectedIndex))
+            return;
+
+        SelectPoint(selectedIndex);
+        PointActivated?.Invoke(this, CreateEventArgs(selectedIndex));
     }
 
     protected override void OnMouseWheel(MouseEventArgs e)
@@ -465,5 +515,43 @@ public sealed class SurfacePlotView : UserControl
         _zoom = Math.Clamp(_zoom * factor, MinZoom, MaxZoom);
         _projectedPoints = null;
         Invalidate();
+    }
+
+    private bool TryGetNearestPointIndex(Point location, out int index)
+    {
+        index = -1;
+        if (!_hasData || _projectedPoints == null || _projectedPoints.Length == 0)
+            return false;
+
+        float bestDist = 14f * 14f;
+        for (int i = 0; i < _projectedPoints.Length; i++)
+        {
+            float dx = _projectedPoints[i].X - location.X;
+            float dy = _projectedPoints[i].Y - location.Y;
+            float d2 = dx * dx + dy * dy;
+            if (d2 < bestDist)
+            {
+                bestDist = d2;
+                index = i;
+            }
+        }
+
+        return index >= 0 && index < _values.Length;
+    }
+
+    private void SelectPoint(int index)
+    {
+        if (_selectedIndex == index)
+            return;
+
+        _selectedIndex = index;
+        Invalidate();
+    }
+
+    private SurfacePointEventArgs CreateEventArgs(int index)
+    {
+        int row = index / _cols;
+        int col = index % _cols;
+        return new SurfacePointEventArgs(row, col, _values[index]);
     }
 }

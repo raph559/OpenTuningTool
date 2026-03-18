@@ -40,6 +40,8 @@ public sealed class TableEditorForm : Form
     private XdfDocument _document;
     private BinBuffer? _bin;
     private bool _initialSizeApplied;
+    private AppTheme _theme;
+    private UiDensity _density;
 
     public TableEditorForm(
         XdfDocument document,
@@ -54,6 +56,8 @@ public sealed class TableEditorForm : Form
         _bin = bin;
         _table = table;
         _notifyTableChanged = notifyTableChanged;
+        _theme = theme;
+        _density = density;
 
         _lblTitle = new Label();
         _lblSummary = new Label();
@@ -69,6 +73,10 @@ public sealed class TableEditorForm : Form
         _btnResetView3D = new Button();
 
         InitializeComponent();
+        _heatmapView.CellSelected += HeatmapView_CellSelected;
+        _heatmapView.CellActivated += HeatmapView_CellActivated;
+        _surfacePlotView.PointSelected += SurfacePlotView_PointSelected;
+        _surfacePlotView.PointActivated += SurfacePlotView_PointActivated;
         ApplyAppearance(theme, density);
         _tabControlView.SelectedIndex = Math.Clamp(initialViewIndex, 0, _tabControlView.TabPages.Count - 1);
         RefreshData();
@@ -78,6 +86,8 @@ public sealed class TableEditorForm : Form
 
     public void ApplyAppearance(AppTheme theme, UiDensity density)
     {
+        _theme = theme;
+        _density = density;
         ThemeUtility.ApplyTheme(this, theme);
         ThemeUtility.ApplyUiDensity(this, density);
     }
@@ -220,40 +230,24 @@ public sealed class TableEditorForm : Form
         if (_bin == null || _table.ZAxis == null || e.RowIndex < 0 || e.ColumnIndex < 0)
             return;
 
-        XdfTableData z = _table.ZAxis;
-        if (!TableEditorSupport.CanEditValue(z.Format, z.ElementSizeBits))
-        {
-            RefreshData();
-            return;
-        }
-
         DataGridViewCell cell = _dgvMap.Rows[e.RowIndex].Cells[e.ColumnIndex];
-        if (!TableEditorSupport.TryParseDisplayValue(cell.Value?.ToString(), z.Format, out double displayValue))
+        if (!TableEditorSupport.TryWriteTableCellValue(
+                _document,
+                _bin,
+                _table,
+                e.RowIndex,
+                e.ColumnIndex,
+                cell.Value?.ToString(),
+                out string errorMessage))
         {
             MessageBox.Show(
-                "Enter a valid value.",
-                "Invalid Input",
+                errorMessage,
+                "Update Failed",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
             RefreshData();
             return;
         }
-
-        if (!TableEditorSupport.TryConvertDisplayToRaw(displayValue, z.Format, z.ElementSizeBits, out double rawValue))
-        {
-            MessageBox.Show(
-                "This table uses a conversion formula that can't be written back yet.",
-                "Write Not Supported",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-            RefreshData();
-            return;
-        }
-
-        int absAddr = _document.BaseOffset + z.Address;
-        int elemBytes = z.ElementSizeBits / 8;
-        int cellIndex = e.RowIndex * z.ColCount + e.ColumnIndex;
-        _bin.WriteCell(absAddr + cellIndex * elemBytes, z.ElementSizeBits, z.Format, rawValue);
 
         RefreshData();
         _notifyTableChanged(_table);
@@ -266,6 +260,15 @@ public sealed class TableEditorForm : Form
         if (_dgvMap.Columns.Count > 0)
             TableEditorSupport.FitMapGridToViewport(_dgvMap);
     }
+
+    private void HeatmapView_CellSelected(object? sender, HeatmapCellEventArgs e) => SelectMapCell(e.Row, e.Col);
+
+    private void HeatmapView_CellActivated(object? sender, HeatmapCellEventArgs e) => EditMapCellFromVisual(e.Row, e.Col, e.DisplayValue);
+
+    private void SurfacePlotView_PointSelected(object? sender, SurfacePointEventArgs e) => SelectMapCell(e.Row, e.Col);
+
+    private void SurfacePlotView_PointActivated(object? sender, SurfacePointEventArgs e) =>
+        EditMapCellFromVisual(e.Row, e.Col, GetGridCellDisplayValue(e.Row, e.Col));
 
     private string BuildSummaryText()
     {
@@ -358,5 +361,51 @@ public sealed class TableEditorForm : Form
             HeatmapBottomMargin;
 
         return new Size(width, height);
+    }
+
+    private void SelectMapCell(int row, int col)
+    {
+        if (row < 0 || col < 0 || row >= _dgvMap.Rows.Count || col >= _dgvMap.Columns.Count)
+            return;
+
+        _dgvMap.ClearSelection();
+        _dgvMap.CurrentCell = _dgvMap.Rows[row].Cells[col];
+        _dgvMap.Rows[row].Cells[col].Selected = true;
+    }
+
+    private void EditMapCellFromVisual(int row, int col, string initialValue)
+    {
+        if (_bin == null)
+            return;
+
+        SelectMapCell(row, col);
+
+        using var dialog = new ValueEditDialog(
+            "Edit Table Value",
+            $"Cell [{row}, {col}]",
+            string.IsNullOrWhiteSpace(initialValue) ? GetGridCellDisplayValue(row, col) : initialValue,
+            _theme,
+            _density);
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+            return;
+
+        if (!TableEditorSupport.TryWriteTableCellValue(_document, _bin, _table, row, col, dialog.ValueText, out string errorMessage))
+        {
+            MessageBox.Show(errorMessage, "Update Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            RefreshData();
+            return;
+        }
+
+        RefreshData();
+        _notifyTableChanged(_table);
+    }
+
+    private string GetGridCellDisplayValue(int row, int col)
+    {
+        if (row < 0 || col < 0 || row >= _dgvMap.Rows.Count || col >= _dgvMap.Columns.Count)
+            return string.Empty;
+
+        return Convert.ToString(_dgvMap.Rows[row].Cells[col].FormattedValue ?? _dgvMap.Rows[row].Cells[col].Value) ?? string.Empty;
     }
 }
