@@ -46,6 +46,11 @@ public sealed class HeatmapView : UserControl
     private const float MinZoom = 0.5f;
     private const float MaxZoom = 6.0f;
 
+    // Inline editing
+    private TextBox? _editingTextBox;
+    private (int row, int col) _editingCell = (-1, -1);
+    private string _originalValue = string.Empty;
+
     private const int MinLeftMargin   = 60;
     private const int MinTopMargin    = 30;
     private const int MinRightMargin  = 70;
@@ -430,12 +435,14 @@ public sealed class HeatmapView : UserControl
         if (e.Button != MouseButtons.Left) return;
         if (!TryGetCellFromPoint(e.Location, out int row, out int col)) return;
 
+        // Select the cell and start inline editing
         _selectedCells.Clear();
         _selectedCells.Add((row, col));
         _anchorCell = (row, col);
-        Invalidate();
         SelectionChanged?.Invoke(_selectedCells);
-        CellActivated?.Invoke(this, new HeatmapCellEventArgs(row, col, GetDisplayValue(row * _cols + col)));
+
+        // Start inline editing
+        StartInlineEditing(row, col);
     }
 
     protected override void OnMouseLeave(EventArgs e)
@@ -618,5 +625,104 @@ public sealed class HeatmapView : UserControl
         if (value == Math.Floor(value) && Math.Abs(value) < 1e9)
             return ((int)value).ToString();
         return value.ToString("G4");
+    }
+
+    private void StartInlineEditing(int row, int col)
+    {
+        // End previous editing if any
+        EndInlineEditing(save: false);
+
+        _editingCell = (row, col);
+        int idx = row * _cols + col;
+        _originalValue = GetDisplayValue(idx);
+
+        // Create and configure the text box
+        _editingTextBox = new TextBox
+        {
+            Text = _originalValue,
+            BackColor = _accentColor,
+            ForeColor = Color.White,
+            Font = CreateValueFont(),
+            BorderStyle = BorderStyle.None,
+            AutoSize = false,
+            MaxLength = 20
+        };
+
+        // Position the text box at the cell location
+        HeatmapLayout layout = CalculateLayout();
+        float x = layout.OriginX + col * layout.CellWidth + 2;
+        float y = layout.OriginY + row * layout.CellHeight + 2;
+        float w = layout.CellWidth - 4;
+        float h = layout.CellHeight - 4;
+
+        _editingTextBox.Bounds = new Rectangle((int)x, (int)y, (int)w, (int)h);
+        Controls.Add(_editingTextBox);
+        _editingTextBox.Focus();
+        _editingTextBox.SelectAll();
+
+        // Wire up events
+        _editingTextBox.KeyDown += OnEditingKeyDown;
+        _editingTextBox.LostFocus += OnEditingLostFocus;
+
+        Invalidate();
+    }
+
+    private void EndInlineEditing(bool save)
+    {
+        if (_editingTextBox == null) return;
+
+        string newValue = _editingTextBox.Text;
+
+        // Detach event handlers before removing from Controls
+        _editingTextBox.KeyDown -= OnEditingKeyDown;
+        _editingTextBox.LostFocus -= OnEditingLostFocus;
+
+        Controls.Remove(_editingTextBox);
+        _editingTextBox.Dispose();
+        _editingTextBox = null;
+
+        if (save && _editingCell.row >= 0 && _editingCell.col >= 0)
+        {
+            int idx = _editingCell.row * _cols + _editingCell.col;
+            if (newValue != _originalValue)
+            {
+                // Try to parse and update the value
+                if (double.TryParse(newValue, out double parsedValue))
+                {
+                    _values[idx] = parsedValue;
+                    _displayValues[idx] = newValue;
+
+                    // Update min/max range
+                    if (parsedValue < _minVal) _minVal = parsedValue;
+                    if (parsedValue > _maxVal) _maxVal = parsedValue;
+
+                    // Raise CellSelected (not CellActivated) to notify of value change without popup
+                    CellSelected?.Invoke(this, new HeatmapCellEventArgs(_editingCell.row, _editingCell.col, newValue));
+                }
+            }
+        }
+
+        _editingCell = (-1, -1);
+        _originalValue = string.Empty;
+        Invalidate();
+    }
+
+    private void OnEditingKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.Return)
+        {
+            e.Handled = true;
+            EndInlineEditing(save: true);
+        }
+        else if (e.KeyCode == Keys.Escape)
+        {
+            e.Handled = true;
+            EndInlineEditing(save: false);
+        }
+    }
+
+    private void OnEditingLostFocus(object? sender, EventArgs e)
+    {
+        EndInlineEditing(save: false);
     }
 }
