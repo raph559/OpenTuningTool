@@ -294,7 +294,15 @@ public sealed class SurfacePlotView : UserControl
         }
         else if (e.Button == MouseButtons.Left && _hasData)
         {
-            _pendingDragIndex = FindNearestPoint(e.Location, 20f);
+            // If Ctrl is held, force box-select mode (don't record pending point drag)
+            if (ModifierKeys.HasFlag(Keys.Control))
+            {
+                _pendingDragIndex = -1;
+            }
+            else
+            {
+                _pendingDragIndex = FindNearestPoint(e.Location, 20f);
+            }
             _leftDragStart    = e.Location;
             _boxSelectCurrent = e.Location;
         }
