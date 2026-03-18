@@ -20,6 +20,7 @@ public partial class Form1 : Form
     private Form? _detachedDetailForm;
     private bool _isMainFormClosing;
     private readonly Dictionary<int, TableEditorForm> _tableEditorForms = [];
+    private readonly BinEditHistory _editHistory = new();
     private readonly CalibrAiClient _calibrAi = new();
 
     public Form1()
@@ -138,6 +139,7 @@ public partial class Form1 : Form
         try
         {
             _document = await Task.Run(() => new XdfParser().Parse(path));
+            _editHistory.Clear();
             CloseAllTableEditorWindows();
             _settings.LastXdfPath = path;
             SaveSettingsQuietly();
@@ -186,6 +188,7 @@ public partial class Form1 : Form
         {
             _bin = BinBuffer.Load(dlg.FileName);
             _binPath = dlg.FileName;
+            _editHistory.Clear();
             _settings.LastBinPath = dlg.FileName;
             SaveSettingsQuietly();
             menuItemSaveBin.Enabled = true;
@@ -933,6 +936,7 @@ public partial class Form1 : Form
                 e.RowIndex,
                 e.ColumnIndex,
                 cell.Value?.ToString(),
+                out BinCellEdit? appliedEdit,
                 out string errorMessage))
         {
             MessageBox.Show(errorMessage, "Update Failed",
@@ -940,6 +944,10 @@ public partial class Form1 : Form
             RefreshDetailPanel();
             return;
         }
+
+        if (appliedEdit is { } edit)
+            _editHistory.Record(edit);
+
         HandleTableDataChanged(_selectedTable);
     }
 
@@ -975,7 +983,20 @@ public partial class Form1 : Form
         }
 
         int absAddr   = _document!.BaseOffset + _selectedConstant.Address;
+        double previousRawValue = _bin.ReadMap(
+            absAddr,
+            1,
+            1,
+            _selectedConstant.ElementSizeBits,
+            _selectedConstant.Format.TypeFlags)[0];
         _bin.WriteCell(absAddr, _selectedConstant.ElementSizeBits, _selectedConstant.Format, rawValue);
+        _editHistory.Record(new BinCellEdit(
+            absAddr,
+            _selectedConstant.ElementSizeBits,
+            _selectedConstant.Format.TypeFlags,
+            previousRawValue,
+            rawValue,
+            $"Constant {_selectedConstant.Title}"));
         UpdateTitleBar();
         RefreshDetailPanel();
         SetStatus($"Updated {_selectedConstant.Title} → {FormatDisplayValue(value, _selectedConstant.Format)}");
@@ -1133,12 +1154,23 @@ public partial class Form1 : Form
         if (dialog.ShowDialog(this) != DialogResult.OK)
             return;
 
-        if (!TableEditorSupport.TryWriteTableCellValue(_document, _bin, _selectedTable, row, col, dialog.ValueText, out string errorMessage))
+        if (!TableEditorSupport.TryWriteTableCellValue(
+                _document,
+                _bin,
+                _selectedTable,
+                row,
+                col,
+                dialog.ValueText,
+                out BinCellEdit? appliedEdit,
+                out string errorMessage))
         {
             MessageBox.Show(errorMessage, "Update Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             RefreshDetailPanel();
             return;
         }
+
+        if (appliedEdit is { } edit)
+            _editHistory.Record(edit);
 
         HandleTableDataChanged(_selectedTable);
     }
@@ -1329,12 +1361,52 @@ public partial class Form1 : Form
         return value.ToString("G6", CultureInfo.CurrentCulture);
     }
 
+    private bool TryUndoBinEdit()
+    {
+        if (!_editHistory.TryUndo(_bin, out BinCellEdit edit))
+            return false;
+
+        UpdateTitleBar();
+        if (_selectedTable != null || _selectedConstant != null)
+            RefreshDetailPanel();
+
+        RefreshOpenTableEditorWindows();
+        SetStatus($"Undo: {edit.Label}");
+        return true;
+    }
+
+    private bool TryRedoBinEdit()
+    {
+        if (!_editHistory.TryRedo(_bin, out BinCellEdit edit))
+            return false;
+
+        UpdateTitleBar();
+        if (_selectedTable != null || _selectedConstant != null)
+            RefreshDetailPanel();
+
+        RefreshOpenTableEditorWindows();
+        SetStatus($"Redo: {edit.Label}");
+        return true;
+    }
+
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
         if (keyData == (Keys.Control | Keys.F))
         {
             OpenTableSearchWindow();
             return true;
+        }
+
+        if (keyData == (Keys.Control | Keys.Z))
+        {
+            if (!KeyboardShortcutSupport.IsTextInputControlFocused(this) && TryUndoBinEdit())
+                return true;
+        }
+
+        if (keyData == (Keys.Control | Keys.Y))
+        {
+            if (!KeyboardShortcutSupport.IsTextInputControlFocused(this) && TryRedoBinEdit())
+                return true;
         }
 
         return base.ProcessCmdKey(ref msg, keyData);

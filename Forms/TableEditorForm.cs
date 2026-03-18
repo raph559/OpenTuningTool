@@ -36,6 +36,7 @@ public sealed class TableEditorForm : Form
     private readonly HeatmapView _heatmapView;
     private readonly SurfacePlotView _surfacePlotView;
     private readonly Button _btnResetView3D;
+    private readonly BinEditHistory _editHistory = new();
 
     private XdfDocument _document;
     private BinBuffer? _bin;
@@ -94,6 +95,9 @@ public sealed class TableEditorForm : Form
 
     public void UpdateDataSource(XdfDocument document, BinBuffer? bin)
     {
+        if (!ReferenceEquals(_document, document) || !ReferenceEquals(_bin, bin))
+            _editHistory.Clear();
+
         _document = document;
         _bin = bin;
     }
@@ -238,6 +242,7 @@ public sealed class TableEditorForm : Form
                 e.RowIndex,
                 e.ColumnIndex,
                 cell.Value?.ToString(),
+                out BinCellEdit? appliedEdit,
                 out string errorMessage))
         {
             MessageBox.Show(
@@ -248,6 +253,9 @@ public sealed class TableEditorForm : Form
             RefreshData();
             return;
         }
+
+        if (appliedEdit is { } edit)
+            _editHistory.Record(edit);
 
         RefreshData();
         _notifyTableChanged(_table);
@@ -390,12 +398,23 @@ public sealed class TableEditorForm : Form
         if (dialog.ShowDialog(this) != DialogResult.OK)
             return;
 
-        if (!TableEditorSupport.TryWriteTableCellValue(_document, _bin, _table, row, col, dialog.ValueText, out string errorMessage))
+        if (!TableEditorSupport.TryWriteTableCellValue(
+                _document,
+                _bin,
+                _table,
+                row,
+                col,
+                dialog.ValueText,
+                out BinCellEdit? appliedEdit,
+                out string errorMessage))
         {
             MessageBox.Show(errorMessage, "Update Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             RefreshData();
             return;
         }
+
+        if (appliedEdit is { } edit)
+            _editHistory.Record(edit);
 
         RefreshData();
         _notifyTableChanged(_table);
@@ -407,5 +426,42 @@ public sealed class TableEditorForm : Form
             return string.Empty;
 
         return Convert.ToString(_dgvMap.Rows[row].Cells[col].FormattedValue ?? _dgvMap.Rows[row].Cells[col].Value) ?? string.Empty;
+    }
+
+    private bool TryUndoBinEdit()
+    {
+        if (!_editHistory.TryUndo(_bin, out _))
+            return false;
+
+        RefreshData();
+        _notifyTableChanged(_table);
+        return true;
+    }
+
+    private bool TryRedoBinEdit()
+    {
+        if (!_editHistory.TryRedo(_bin, out _))
+            return false;
+
+        RefreshData();
+        _notifyTableChanged(_table);
+        return true;
+    }
+
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (keyData == (Keys.Control | Keys.Z))
+        {
+            if (!KeyboardShortcutSupport.IsTextInputControlFocused(this) && TryUndoBinEdit())
+                return true;
+        }
+
+        if (keyData == (Keys.Control | Keys.Y))
+        {
+            if (!KeyboardShortcutSupport.IsTextInputControlFocused(this) && TryRedoBinEdit())
+                return true;
+        }
+
+        return base.ProcessCmdKey(ref msg, keyData);
     }
 }

@@ -338,6 +338,28 @@ internal static class TableEditorSupport
         string? text,
         out string errorMessage)
     {
+        return TryWriteTableCellValue(
+            document,
+            bin,
+            table,
+            rowIndex,
+            columnIndex,
+            text,
+            out _,
+            out errorMessage);
+    }
+
+    public static bool TryWriteTableCellValue(
+        XdfDocument document,
+        BinBuffer bin,
+        XdfTable table,
+        int rowIndex,
+        int columnIndex,
+        string? text,
+        out BinCellEdit? appliedEdit,
+        out string errorMessage)
+    {
+        appliedEdit = null;
         errorMessage = string.Empty;
         if (table.ZAxis == null)
         {
@@ -373,7 +395,16 @@ internal static class TableEditorSupport
         int absAddr = document.BaseOffset + z.Address;
         int elemBytes = z.ElementSizeBits / 8;
         int cellIndex = rowIndex * z.ColCount + columnIndex;
-        bin.WriteCell(absAddr + (cellIndex * elemBytes), z.ElementSizeBits, z.Format, rawValue);
+        int cellOffset = absAddr + (cellIndex * elemBytes);
+        double previousRawValue = bin.ReadMap(cellOffset, 1, 1, z.ElementSizeBits, z.Format.TypeFlags)[0];
+        bin.WriteCell(cellOffset, z.ElementSizeBits, z.Format, rawValue);
+        appliedEdit = new BinCellEdit(
+            cellOffset,
+            z.ElementSizeBits,
+            z.Format.TypeFlags,
+            previousRawValue,
+            rawValue,
+            $"Table {table.Title} [{rowIndex}, {columnIndex}]");
         return true;
     }
 
