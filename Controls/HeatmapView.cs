@@ -4,6 +4,15 @@ namespace OpenTuningTool.Controls;
 
 public sealed class HeatmapView : UserControl
 {
+    private readonly record struct HeatmapLayout(
+        float OriginX,
+        float OriginY,
+        float CellWidth,
+        float CellHeight,
+        float LegendX,
+        float LegendY,
+        float LegendHeight);
+
     private double[] _values = [];
     private string[] _displayValues = [];
     private int _rows;
@@ -51,7 +60,6 @@ public sealed class HeatmapView : UserControl
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
                  ControlStyles.DoubleBuffer | ControlStyles.ResizeRedraw |
                  ControlStyles.OptimizedDoubleBuffer, true);
-        AutoScroll = true;
     }
 
     public void LoadData(double[] values, int rows, int cols, double[]? xLabels, double[]? yLabels, string[]? displayValues = null)
@@ -110,11 +118,9 @@ public sealed class HeatmapView : UserControl
             return;
         }
 
-        // Apply scroll offset
-        g.TranslateTransform(AutoScrollPosition.X, AutoScrollPosition.Y);
-
-        float cellW = GetCellWidth();
-        float cellH = GetCellHeight();
+        HeatmapLayout layout = CalculateLayout();
+        float cellW = layout.CellWidth;
+        float cellH = layout.CellHeight;
 
         using var gridPen = new Pen(_gridColor, 0.5f);
         using var labelFont = CreateLabelFont();
@@ -138,8 +144,8 @@ public sealed class HeatmapView : UserControl
         {
             for (int c = 0; c < _cols; c++)
             {
-                float x = _leftMargin + c * cellW;
-                float y = _topMargin + r * cellH;
+                float x = layout.OriginX + c * cellW;
+                float y = layout.OriginY + r * cellH;
                 int idx = r * _cols + c;
                 if (idx >= _values.Length) continue;
 
@@ -173,7 +179,7 @@ public sealed class HeatmapView : UserControl
                 float x = _leftMargin + c * cellW + cellW / 2;
                 string label = FormatAxisValue(_xLabels[c]);
                 var size = g.MeasureString(label, labelFont);
-                g.DrawString(label, labelFont, labelBrush, x - size.Width / 2, _topMargin - size.Height - 2);
+                g.DrawString(label, labelFont, labelBrush, x - size.Width / 2, layout.OriginY - size.Height - 2);
             }
         }
 
@@ -184,17 +190,17 @@ public sealed class HeatmapView : UserControl
             for (int r = 0; r < _rows; r += step)
             {
                 if (r >= _yLabels.Length) break;
-                float y = _topMargin + r * cellH + cellH / 2;
+                float y = layout.OriginY + r * cellH + cellH / 2;
                 string label = FormatAxisValue(_yLabels[r]);
                 var size = g.MeasureString(label, labelFont);
-                g.DrawString(label, labelFont, labelBrush, _leftMargin - size.Width - 4, y - size.Height / 2);
+                g.DrawString(label, labelFont, labelBrush, layout.OriginX - size.Width - 4, y - size.Height / 2);
             }
         }
 
         // Color legend bar
-        float legendX = _leftMargin + _cols * cellW + LegendGap;
-        float legendY = _topMargin;
-        float legendH = _rows * cellH;
+        float legendX = layout.LegendX;
+        float legendY = layout.LegendY;
+        float legendH = layout.LegendHeight;
 
         if (legendH > 0)
         {
@@ -222,10 +228,11 @@ public sealed class HeatmapView : UserControl
         base.OnMouseMove(e);
         if (!_hasData) return;
 
-        float cellW = GetCellWidth();
-        float cellH = GetCellHeight();
-        float mx = e.X - AutoScrollPosition.X - _leftMargin;
-        float my = e.Y - AutoScrollPosition.Y - _topMargin;
+        HeatmapLayout layout = CalculateLayout();
+        float cellW = layout.CellWidth;
+        float cellH = layout.CellHeight;
+        float mx = e.X - layout.OriginX;
+        float my = e.Y - layout.OriginY;
 
         int col = (int)(mx / cellW);
         int row = (int)(my / cellH);
@@ -305,18 +312,7 @@ public sealed class HeatmapView : UserControl
         return Math.Max(BaseCellHeight * _zoomFactor, _minimumCellHeight);
     }
 
-    private void UpdateScrollSize()
-    {
-        if (!_hasData)
-        {
-            AutoScrollMinSize = Size.Empty;
-            return;
-        }
-
-        int totalW = _leftMargin + (int)Math.Ceiling(_cols * GetCellWidth()) + _rightMargin;
-        int totalH = _topMargin + (int)Math.Ceiling(_rows * GetCellHeight()) + _bottomMargin;
-        AutoScrollMinSize = new Size(totalW, totalH);
-    }
+    private void UpdateScrollSize() { }
 
     private void UpdateLayoutMetrics()
     {
@@ -427,5 +423,26 @@ public sealed class HeatmapView : UserControl
         if (value == Math.Floor(value) && Math.Abs(value) < 1e9)
             return ((int)value).ToString();
         return value.ToString("G4");
+    }
+
+    private HeatmapLayout CalculateLayout()
+    {
+        float preferredCellWidth = GetCellWidth();
+        float preferredCellHeight = GetCellHeight();
+        float availableWidth = Math.Max(1f, ClientSize.Width - _leftMargin - _rightMargin);
+        float availableHeight = Math.Max(1f, ClientSize.Height - _topMargin - _bottomMargin);
+
+        float fittedCellWidth = _cols > 0 ? availableWidth / _cols : preferredCellWidth;
+        float fittedCellHeight = _rows > 0 ? availableHeight / _rows : preferredCellHeight;
+        float cellWidth = Math.Min(preferredCellWidth, fittedCellWidth);
+        float cellHeight = Math.Min(preferredCellHeight, fittedCellHeight);
+
+        float contentWidth = _cols * cellWidth;
+        float contentHeight = _rows * cellHeight;
+        float originX = _leftMargin + Math.Max(0f, (availableWidth - contentWidth) / 2f);
+        float originY = _topMargin + Math.Max(0f, (availableHeight - contentHeight) / 2f);
+        float legendX = originX + contentWidth + LegendGap;
+
+        return new HeatmapLayout(originX, originY, cellWidth, cellHeight, legendX, originY, contentHeight);
     }
 }

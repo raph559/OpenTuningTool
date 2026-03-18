@@ -821,89 +821,13 @@ public partial class Form1 : Form
 
     private void LoadMapIntoGrid(XdfTable table, double[] values)
     {
-        int rows = table.ZAxis!.RowCount;
-        int cols = table.ZAxis.ColCount;
-        XdfValueFormat zFormat = table.ZAxis.Format;
-
-        dgvMap.SuspendLayout();
-        dgvMap.Rows.Clear();
-        dgvMap.Columns.Clear();
-        dgvMap.ReadOnly = !CanEditValue(zFormat, table.ZAxis.ElementSizeBits);
-
-        // Column headers from X-axis values if readable, else indices
-        double[]? xVals = TryReadAxisValues(table.XAxis);
-        for (int c = 0; c < cols; c++)
-        {
-            string header = GetAxisDisplayLabel(table.XAxis, c, xVals);
-            dgvMap.Columns.Add(new DataGridViewTextBoxColumn
-            {
-                HeaderText = header,
-                SortMode = DataGridViewColumnSortMode.NotSortable,
-            });
-        }
-
-        // Row headers from Y-axis values if readable, else indices
-        double[]? yVals = TryReadAxisValues(table.YAxis);
-        for (int r = 0; r < rows; r++)
-        {
-            string rowHeader = GetAxisDisplayLabel(table.YAxis, r, yVals);
-            int idx = dgvMap.Rows.Add();
-            dgvMap.Rows[idx].HeaderCell.Value = rowHeader;
-            for (int c = 0; c < cols; c++)
-                dgvMap.Rows[idx].Cells[c].Value = FormatDisplayValue(values[r * cols + c], zFormat);
-        }
-
-        ResizeMapGridColumns();
-        dgvMap.ResumeLayout();
+        TableEditorSupport.PopulateMapGrid(dgvMap, _document, _bin, table, values);
     }
 
-    private void ResizeMapGridColumns()
+    private void DgvMap_Resize(object? sender, EventArgs e)
     {
-        if (dgvMap.Columns.Count == 0)
-        {
-            dgvMap.RowHeadersWidth = 60;
-            return;
-        }
-
-        const int cellPadding = 20;
-        const int headerPadding = 24;
-        TextFormatFlags measureFlags = TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine;
-        Font headerFont = dgvMap.ColumnHeadersDefaultCellStyle.Font ?? dgvMap.Font;
-        Font cellFont = dgvMap.DefaultCellStyle.Font ?? dgvMap.Font;
-        Font rowHeaderFont = dgvMap.RowHeadersDefaultCellStyle.Font ?? dgvMap.Font;
-
-        foreach (DataGridViewColumn column in dgvMap.Columns)
-        {
-            int width = MeasureGridText(column.HeaderText, headerFont, measureFlags) + headerPadding;
-
-            foreach (DataGridViewRow row in dgvMap.Rows)
-            {
-                if (row.IsNewRow) continue;
-
-                DataGridViewCell cell = row.Cells[column.Index];
-                string text = Convert.ToString(cell.FormattedValue ?? cell.Value, CultureInfo.CurrentCulture) ?? string.Empty;
-                width = Math.Max(width, MeasureGridText(text, cellFont, measureFlags) + cellPadding);
-            }
-
-            column.Width = Math.Max(width, 56);
-        }
-
-        int rowHeaderWidth = 60;
-        foreach (DataGridViewRow row in dgvMap.Rows)
-        {
-            if (row.IsNewRow) continue;
-
-            string text = Convert.ToString(row.HeaderCell.FormattedValue ?? row.HeaderCell.Value, CultureInfo.CurrentCulture) ?? string.Empty;
-            rowHeaderWidth = Math.Max(rowHeaderWidth, MeasureGridText(text, rowHeaderFont, measureFlags) + cellPadding);
-        }
-
-        dgvMap.RowHeadersWidth = rowHeaderWidth;
-    }
-
-    private static int MeasureGridText(string? text, Font font, TextFormatFlags flags)
-    {
-        string measureText = string.IsNullOrEmpty(text) ? " " : text;
-        return TextRenderer.MeasureText(measureText, font, Size.Empty, flags).Width;
+        if (dgvMap.Columns.Count > 0)
+            TableEditorSupport.FitMapGridToViewport(dgvMap);
     }
 
     private double[]? TryReadAxisValues(XdfAxis? axis)

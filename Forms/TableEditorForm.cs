@@ -8,9 +8,11 @@ public sealed class TableEditorForm : Form
 {
     private const int HeaderHeight = 88;
     private const int BodyPadding = 10;
-    private const int MinimumEditorWidth = 560;
-    private const int MinimumEditorHeight = 380;
+    private const int MinimumEditorWidth = 760;
+    private const int MinimumEditorHeight = 520;
     private const int MaximumScreenMargin = 80;
+    private const int TabChromeWidth = 12;
+    private const int TabChromeHeight = 34;
     private const int HeatmapLeftMargin = 60;
     private const int HeatmapTopMargin = 30;
     private const int HeatmapRightMargin = 70;
@@ -168,7 +170,11 @@ public sealed class TableEditorForm : Form
         _dgvMap.AllowUserToResizeRows = false;
         _dgvMap.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
         _dgvMap.RowHeadersWidth = 60;
+        _dgvMap.ScrollBars = ScrollBars.None;
+        _dgvMap.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+        _dgvMap.RowHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
         _dgvMap.CellEndEdit += DgvMap_CellEndEdit;
+        _dgvMap.Resize += DgvMap_Resize;
         _tabText.Controls.Add(_dgvMap);
 
         _heatmapView.Dock = DockStyle.Fill;
@@ -255,6 +261,12 @@ public sealed class TableEditorForm : Form
 
     private void BtnResetView3D_Click(object? sender, EventArgs e) => _surfacePlotView.ResetView();
 
+    private void DgvMap_Resize(object? sender, EventArgs e)
+    {
+        if (_dgvMap.Columns.Count > 0)
+            TableEditorSupport.FitMapGridToViewport(_dgvMap);
+    }
+
     private string BuildSummaryText()
     {
         if (_table.ZAxis == null)
@@ -297,8 +309,10 @@ public sealed class TableEditorForm : Form
         Size gridSize = CalculateGridViewportSize();
         Size heatmapSize = CalculateHeatmapViewportSize();
 
-        int bodyWidth = Math.Max(gridSize.Width, heatmapSize.Width) + (BodyPadding * 2);
-        int bodyHeight = Math.Max(gridSize.Height, heatmapSize.Height) + (BodyPadding * 2);
+        int contentWidth = Math.Max(gridSize.Width, heatmapSize.Width);
+        int contentHeight = Math.Max(gridSize.Height, heatmapSize.Height);
+        int bodyWidth = contentWidth + (BodyPadding * 2) + TabChromeWidth;
+        int bodyHeight = contentHeight + (BodyPadding * 2) + TabChromeHeight;
 
         return new Size(
             Math.Max(MinimumEditorWidth, bodyWidth),

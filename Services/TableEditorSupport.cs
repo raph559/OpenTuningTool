@@ -82,11 +82,11 @@ internal static class TableEditorSupport
                 grid.Rows[idx].Cells[c].Value = FormatDisplayValue(values[r * cols + c], zFormat);
         }
 
-        ResizeMapGridColumns(grid);
+        FitMapGridToViewport(grid);
         grid.ResumeLayout();
     }
 
-    public static void ResizeMapGridColumns(DataGridView grid)
+    public static void FitMapGridToViewport(DataGridView grid)
     {
         if (grid.Columns.Count == 0)
         {
@@ -96,10 +96,13 @@ internal static class TableEditorSupport
 
         const int cellPadding = 20;
         const int headerPadding = 24;
+        const int minimumColumnWidth = 42;
+        const int minimumRowHeight = 18;
         TextFormatFlags measureFlags = TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine;
         Font headerFont = grid.ColumnHeadersDefaultCellStyle.Font ?? grid.Font;
         Font cellFont = grid.DefaultCellStyle.Font ?? grid.Font;
         Font rowHeaderFont = grid.RowHeadersDefaultCellStyle.Font ?? grid.Font;
+        List<int> measuredColumnWidths = [];
 
         foreach (DataGridViewColumn column in grid.Columns)
         {
@@ -114,7 +117,7 @@ internal static class TableEditorSupport
                 width = Math.Max(width, MeasureGridText(text, cellFont, measureFlags) + cellPadding);
             }
 
-            column.Width = Math.Max(width, 56);
+            measuredColumnWidths.Add(Math.Max(width, 56));
         }
 
         int rowHeaderWidth = 60;
@@ -127,6 +130,59 @@ internal static class TableEditorSupport
         }
 
         grid.RowHeadersWidth = rowHeaderWidth;
+        grid.ScrollBars = ScrollBars.None;
+
+        int availableColumnsWidth = Math.Max(1, grid.ClientSize.Width - rowHeaderWidth - 2);
+        int totalMeasuredColumnWidth = measuredColumnWidths.Sum();
+        int[] fittedColumnWidths = new int[measuredColumnWidths.Count];
+        if (totalMeasuredColumnWidth <= 0)
+        {
+            int evenWidth = Math.Max(minimumColumnWidth, availableColumnsWidth / Math.Max(1, grid.Columns.Count));
+            for (int i = 0; i < fittedColumnWidths.Length; i++)
+                fittedColumnWidths[i] = evenWidth;
+        }
+        else if (totalMeasuredColumnWidth >= availableColumnsWidth)
+        {
+            float scale = (float)availableColumnsWidth / totalMeasuredColumnWidth;
+            for (int i = 0; i < measuredColumnWidths.Count; i++)
+                fittedColumnWidths[i] = Math.Max(minimumColumnWidth, (int)Math.Floor(measuredColumnWidths[i] * scale));
+        }
+        else
+        {
+            measuredColumnWidths.CopyTo(fittedColumnWidths, 0);
+        }
+
+        DistributeRemainingPixels(fittedColumnWidths, availableColumnsWidth);
+
+        for (int i = 0; i < grid.Columns.Count; i++)
+            grid.Columns[i].Width = fittedColumnWidths[i];
+
+        int visibleRowCount = grid.Rows.Cast<DataGridViewRow>().Count(row => !row.IsNewRow && row.Visible);
+        if (visibleRowCount == 0)
+            return;
+
+        int availableRowsHeight = Math.Max(1, grid.ClientSize.Height - grid.ColumnHeadersHeight - 2);
+        int baseRowHeight = Math.Max(grid.RowTemplate.Height, minimumRowHeight);
+        int[] rowHeights = Enumerable.Repeat(baseRowHeight, visibleRowCount).ToArray();
+        int totalBaseRowHeight = rowHeights.Sum();
+
+        if (totalBaseRowHeight > availableRowsHeight)
+        {
+            float scale = (float)availableRowsHeight / totalBaseRowHeight;
+            for (int i = 0; i < rowHeights.Length; i++)
+                rowHeights[i] = Math.Max(minimumRowHeight, (int)Math.Floor(rowHeights[i] * scale));
+        }
+
+        DistributeRemainingPixels(rowHeights, availableRowsHeight);
+
+        int rowIndex = 0;
+        foreach (DataGridViewRow row in grid.Rows)
+        {
+            if (row.IsNewRow || !row.Visible)
+                continue;
+
+            row.Height = rowHeights[rowIndex++];
+        }
     }
 
     public static void LoadVisualizationViews(
@@ -326,5 +382,20 @@ internal static class TableEditorSupport
     {
         string measureText = string.IsNullOrEmpty(text) ? " " : text;
         return TextRenderer.MeasureText(measureText, font, Size.Empty, flags).Width;
+    }
+
+    private static void DistributeRemainingPixels(int[] sizes, int targetTotal)
+    {
+        if (sizes.Length == 0)
+            return;
+
+        int diff = targetTotal - sizes.Sum();
+        int index = 0;
+        while (diff > 0)
+        {
+            sizes[index % sizes.Length]++;
+            index++;
+            diff--;
+        }
     }
 }

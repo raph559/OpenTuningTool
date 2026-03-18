@@ -355,8 +355,12 @@ partial class Form1
         dgvMap.AllowUserToDeleteRows = false;
         dgvMap.RowHeadersWidth = 60;
         dgvMap.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
+        dgvMap.ScrollBars = ScrollBars.None;
+        dgvMap.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+        dgvMap.RowHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
         dgvMap.ApplyThemeColors(bgDark, bgPanel, bgControl, fgLight, accent, Color.FromArgb(60, 60, 60));
         dgvMap.CellEndEdit += DgvMap_CellEndEdit;
+        dgvMap.Resize += DgvMap_Resize;
 
         tabText.Controls.Add(dgvMap);
         tabText.BackColor = bgDark;
