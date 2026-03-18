@@ -4,8 +4,8 @@ namespace OpenTuningTool.Controls;
 
 public sealed class HeatmapCellEventArgs(int row, int col, string displayValue) : EventArgs
 {
-    public int Row { get; } = row;
-    public int Col { get; } = col;
+    public int Row   { get; } = row;
+    public int Col   { get; } = col;
     public string DisplayValue { get; } = displayValue;
 }
 
@@ -32,40 +32,58 @@ public sealed class HeatmapView : UserControl
 
     private int _hoveredRow = -1;
     private int _hoveredCol = -1;
-    private int _selectedRow = -1;
-    private int _selectedCol = -1;
+
+    // Multi-selection
+    private readonly HashSet<(int row, int col)> _selectedCells = new();
+    private (int row, int col) _anchorCell = (-1, -1);
+    private bool _isDragSelecting;
+    private (int row, int col) _dragAnchorCell;
+    private (int row, int col) _dragCurrentCell;
+    private Point _dragStartPixel;
+    private const int DragThreshold = 4;
 
     private float _zoomFactor = 1.0f;
     private const float MinZoom = 0.5f;
     private const float MaxZoom = 6.0f;
 
-    private const int MinLeftMargin = 60;
-    private const int MinTopMargin = 30;
-    private const int MinRightMargin = 70;
+    private const int MinLeftMargin   = 60;
+    private const int MinTopMargin    = 30;
+    private const int MinRightMargin  = 70;
     private const int MinBottomMargin = 24;
-    private const int LegendWidth = 20;
-    private const int LegendGap = 12;
-    private const float BaseCellWidth = 36f;
-    private const float BaseCellHeight = 20f;
+    private const int LegendWidth     = 20;
+    private const int LegendGap       = 12;
+    private const float BaseCellWidth    = 36f;
+    private const float BaseCellHeight   = 20f;
     private const float MaxValueFontSize = 11.5f;
 
-    private int _leftMargin = MinLeftMargin;
-    private int _topMargin = MinTopMargin;
-    private int _rightMargin = MinRightMargin;
+    private int _leftMargin   = MinLeftMargin;
+    private int _topMargin    = MinTopMargin;
+    private int _rightMargin  = MinRightMargin;
     private int _bottomMargin = MinBottomMargin;
-    private float _minimumCellWidth = BaseCellWidth;
+    private float _minimumCellWidth  = BaseCellWidth;
     private float _minimumCellHeight = BaseCellHeight;
 
-    private Color _bgColor = Color.FromArgb(30, 30, 30);
-    private Color _fgColor = Color.FromArgb(220, 220, 220);
-    private Color _gridColor = Color.FromArgb(60, 60, 60);
+    private Color _bgColor     = Color.FromArgb(30, 30, 30);
+    private Color _fgColor     = Color.FromArgb(220, 220, 220);
+    private Color _gridColor   = Color.FromArgb(60, 60, 60);
     private Color _accentColor = Color.FromArgb(0, 122, 204);
 
     private readonly ToolTip _tooltip = new() { InitialDelay = 100, ReshowDelay = 50 };
     private string _lastTooltip = string.Empty;
 
+    // Events
     public event EventHandler<HeatmapCellEventArgs>? CellSelected;
     public event EventHandler<HeatmapCellEventArgs>? CellActivated;
+    public event Action<IReadOnlyCollection<(int row, int col)>>? SelectionChanged;
+
+    public IReadOnlyCollection<(int row, int col)> SelectedCells => _selectedCells;
+
+    public void SetSelectedCells(IEnumerable<(int row, int col)> cells)
+    {
+        _selectedCells.Clear();
+        _selectedCells.UnionWith(cells);
+        Invalidate();
+    }
 
     public HeatmapView()
     {
@@ -80,8 +98,8 @@ public sealed class HeatmapView : UserControl
         _displayValues = displayValues != null && displayValues.Length == values.Length
             ? displayValues
             : values.Select(FormatCellValue).ToArray();
-        _rows = rows;
-        _cols = cols;
+        _rows    = rows;
+        _cols    = cols;
         _xLabels = xLabels;
         _yLabels = yLabels;
         _hasData = values.Length > 0 && rows > 0 && cols > 0;
@@ -97,6 +115,7 @@ public sealed class HeatmapView : UserControl
             }
         }
 
+        _selectedCells.Clear();
         _zoomFactor = 1.0f;
         UpdateLayoutMetrics();
         UpdateScrollSize();
@@ -105,9 +124,9 @@ public sealed class HeatmapView : UserControl
 
     public void ApplyThemeColors(Color bg, Color fg, Color grid, Color accent)
     {
-        _bgColor = bg;
-        _fgColor = fg;
-        _gridColor = grid;
+        _bgColor     = bg;
+        _fgColor     = fg;
+        _gridColor   = grid;
         _accentColor = accent;
         Invalidate();
     }
@@ -115,7 +134,7 @@ public sealed class HeatmapView : UserControl
     protected override void OnPaint(PaintEventArgs e)
     {
         Graphics g = e.Graphics;
-        g.SmoothingMode = SmoothingMode.HighQuality;
+        g.SmoothingMode     = SmoothingMode.HighQuality;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
 
         using var bgBrush = new SolidBrush(_bgColor);
@@ -124,7 +143,7 @@ public sealed class HeatmapView : UserControl
         if (!_hasData)
         {
             using var msgBrush = new SolidBrush(Color.FromArgb(150, _fgColor));
-            using var msgFont = new Font("Segoe UI", 10f, FontStyle.Italic);
+            using var msgFont  = new Font("Segoe UI", 10f, FontStyle.Italic);
             var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
             g.DrawString("No map data to display.", msgFont, msgBrush, ClientRectangle, sf);
             return;
@@ -134,49 +153,66 @@ public sealed class HeatmapView : UserControl
         float cellW = layout.CellWidth;
         float cellH = layout.CellHeight;
 
-        using var gridPen = new Pen(_gridColor, 0.5f);
-        using var labelFont = CreateLabelFont();
-        using var labelBrush = new SolidBrush(Color.FromArgb(180, _fgColor));
-        using var darkTextBrush = new SolidBrush(Color.FromArgb(24, 24, 24));
+        using var gridPen        = new Pen(_gridColor, 0.5f);
+        using var labelFont      = CreateLabelFont();
+        using var labelBrush     = new SolidBrush(Color.FromArgb(180, _fgColor));
+        using var darkTextBrush  = new SolidBrush(Color.FromArgb(24, 24, 24));
         using var lightTextBrush = new SolidBrush(Color.FromArgb(245, 245, 245));
-        using var valueFont = CreateValueFont();
-        using var valueFormat = new StringFormat
+        using var valueFont      = CreateValueFont();
+        using var valueFormat    = new StringFormat
         {
-            Alignment = StringAlignment.Center,
+            Alignment     = StringAlignment.Center,
             LineAlignment = StringAlignment.Center,
-            Trimming = StringTrimming.None,
-            FormatFlags = StringFormatFlags.NoWrap
+            Trimming      = StringTrimming.None,
+            FormatFlags   = StringFormatFlags.NoWrap
         };
+
+        // Drag-select preview range in cell-space
+        (int r0, int r1, int c0, int c1) dragRect = (-1, -1, -1, -1);
+        if (_isDragSelecting)
+        {
+            dragRect = (
+                Math.Min(_dragAnchorCell.row,  _dragCurrentCell.row),
+                Math.Max(_dragAnchorCell.row,  _dragCurrentCell.row),
+                Math.Min(_dragAnchorCell.col,  _dragCurrentCell.col),
+                Math.Max(_dragAnchorCell.col,  _dragCurrentCell.col)
+            );
+        }
 
         double range = _maxVal - _minVal;
         if (range == 0) range = 1;
 
-        // Draw cells
         for (int r = 0; r < _rows; r++)
         {
             for (int c = 0; c < _cols; c++)
             {
-                float x = layout.OriginX + c * cellW;
-                float y = layout.OriginY + r * cellH;
-                int idx = r * _cols + c;
+                float x   = layout.OriginX + c * cellW;
+                float y   = layout.OriginY + r * cellH;
+                int   idx = r * _cols + c;
                 if (idx >= _values.Length) continue;
 
-                double norm = (_values[idx] - _minVal) / range;
-                Color cellColor = ThemeUtility.ValueToHeatColor(norm);
+                double norm      = (_values[idx] - _minVal) / range;
+                Color  cellColor = ThemeUtility.ValueToHeatColor(norm);
 
                 using var cellBrush = new SolidBrush(cellColor);
                 g.FillRectangle(cellBrush, x, y, cellW, cellH);
                 g.DrawRectangle(gridPen, x, y, cellW, cellH);
 
-                RectangleF textBounds = new(x + 2, y + 2, cellW - 4, cellH - 4);
                 Brush textBrush = GetCellTextBrush(cellColor, darkTextBrush, lightTextBrush);
-                g.DrawString(GetDisplayValue(idx), valueFont, textBrush, textBounds, valueFormat);
+                g.DrawString(GetDisplayValue(idx), valueFont, textBrush,
+                    new RectangleF(x + 2, y + 2, cellW - 4, cellH - 4), valueFormat);
 
-                // Hover highlight
-                if (r == _selectedRow && c == _selectedCol)
+                bool isSelected = _selectedCells.Contains((r, c));
+                bool isInDrag   = _isDragSelecting &&
+                    r >= dragRect.r0 && r <= dragRect.r1 &&
+                    c >= dragRect.c0 && c <= dragRect.c1;
+
+                if (isSelected || isInDrag)
                 {
-                    using var selectedPen = new Pen(_accentColor, 3f);
-                    g.DrawRectangle(selectedPen, x + 1.5f, y + 1.5f, cellW - 3f, cellH - 3f);
+                    using var selFill = new SolidBrush(Color.FromArgb(60, _accentColor));
+                    using var selPen  = new Pen(_accentColor, 2f);
+                    g.FillRectangle(selFill, x, y, cellW, cellH);
+                    g.DrawRectangle(selPen, x + 1f, y + 1f, cellW - 2f, cellH - 2f);
                 }
                 else if (r == _hoveredRow && c == _hoveredCol)
                 {
@@ -193,9 +229,9 @@ public sealed class HeatmapView : UserControl
             for (int c = 0; c < _cols; c += step)
             {
                 if (c >= _xLabels.Length) break;
-                float x = _leftMargin + c * cellW + cellW / 2;
+                float  x     = layout.OriginX + c * cellW + cellW / 2;
                 string label = FormatAxisValue(_xLabels[c]);
-                var size = g.MeasureString(label, labelFont);
+                var    size  = g.MeasureString(label, labelFont);
                 g.DrawString(label, labelFont, labelBrush, x - size.Width / 2, layout.OriginY - size.Height - 2);
             }
         }
@@ -207,9 +243,9 @@ public sealed class HeatmapView : UserControl
             for (int r = 0; r < _rows; r += step)
             {
                 if (r >= _yLabels.Length) break;
-                float y = layout.OriginY + r * cellH + cellH / 2;
+                float  y     = layout.OriginY + r * cellH + cellH / 2;
                 string label = FormatAxisValue(_yLabels[r]);
-                var size = g.MeasureString(label, labelFont);
+                var    size  = g.MeasureString(label, labelFont);
                 g.DrawString(label, labelFont, labelBrush, layout.OriginX - size.Width - 4, y - size.Height / 2);
             }
         }
@@ -224,19 +260,62 @@ public sealed class HeatmapView : UserControl
             for (int py = 0; py < (int)legendH; py++)
             {
                 double norm = 1.0 - (double)py / legendH;
-                Color c = ThemeUtility.ValueToHeatColor(norm);
+                Color  c   = ThemeUtility.ValueToHeatColor(norm);
                 using var pen = new Pen(c, 1f);
                 g.DrawLine(pen, legendX, legendY + py, legendX + LegendWidth, legendY + py);
             }
 
             g.DrawRectangle(gridPen, legendX, legendY, LegendWidth, legendH);
+            g.DrawString(_maxVal.ToString("G5"), labelFont, labelBrush, legendX, legendY - 14);
+            var minSize = g.MeasureString(_minVal.ToString("G5"), labelFont);
+            g.DrawString(_minVal.ToString("G5"), labelFont, labelBrush, legendX, legendY + legendH + 2);
+        }
+    }
 
-            // Min/Max labels
-            string maxStr = _maxVal.ToString("G5");
-            string minStr = _minVal.ToString("G5");
-            g.DrawString(maxStr, labelFont, labelBrush, legendX, legendY - 14);
-            var minSize = g.MeasureString(minStr, labelFont);
-            g.DrawString(minStr, labelFont, labelBrush, legendX, legendY + legendH + 2);
+    // -----------------------------------------------------------------------
+    // Mouse handling
+    // -----------------------------------------------------------------------
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        if (!_hasData || e.Button != MouseButtons.Left) return;
+
+        _dragStartPixel = e.Location;
+        _isDragSelecting = false;
+
+        if (!TryGetCellFromPoint(e.Location, out int row, out int col))
+        {
+            // Click on empty area — clear selection unless modifier held
+            if (!ModifierKeys.HasFlag(Keys.Control) && !ModifierKeys.HasFlag(Keys.Shift))
+            {
+                _selectedCells.Clear();
+                _anchorCell = (-1, -1);
+                Invalidate();
+                SelectionChanged?.Invoke(_selectedCells);
+            }
+            return;
+        }
+
+        _dragAnchorCell  = (row, col);
+        _dragCurrentCell = (row, col);
+
+        if (ModifierKeys.HasFlag(Keys.Shift) && _anchorCell.row >= 0)
+        {
+            // Shift+click: fill range from anchor to here
+            _selectedCells.Clear();
+            int r0 = Math.Min(_anchorCell.row, row), r1 = Math.Max(_anchorCell.row, row);
+            int c0 = Math.Min(_anchorCell.col, col), c1 = Math.Max(_anchorCell.col, col);
+            for (int r = r0; r <= r1; r++)
+                for (int c = c0; c <= c1; c++)
+                    _selectedCells.Add((r, c));
+
+            Invalidate();
+            SelectionChanged?.Invoke(_selectedCells);
+        }
+        else
+        {
+            _anchorCell = (row, col);
         }
     }
 
@@ -245,25 +324,40 @@ public sealed class HeatmapView : UserControl
         base.OnMouseMove(e);
         if (!_hasData) return;
 
+        if (e.Button == MouseButtons.Left)
+        {
+            int dx = e.X - _dragStartPixel.X;
+            int dy = e.Y - _dragStartPixel.Y;
+            bool pastThreshold = Math.Abs(dx) > DragThreshold || Math.Abs(dy) > DragThreshold;
+
+            if (pastThreshold && !_isDragSelecting && _dragAnchorCell.row >= 0)
+                _isDragSelecting = true;
+
+            if (_isDragSelecting && TryGetCellFromPoint(e.Location, out int row, out int col))
+            {
+                _dragCurrentCell = (row, col);
+                Invalidate();
+            }
+            return;
+        }
+
+        // Hover tracking
         HeatmapLayout layout = CalculateLayout();
-        float cellW = layout.CellWidth;
-        float cellH = layout.CellHeight;
         float mx = e.X - layout.OriginX;
         float my = e.Y - layout.OriginY;
+        int hcol = (int)(mx / layout.CellWidth);
+        int hrow = (int)(my / layout.CellHeight);
 
-        int col = (int)(mx / cellW);
-        int row = (int)(my / cellH);
-
-        if (row >= 0 && row < _rows && col >= 0 && col < _cols && mx >= 0 && my >= 0)
+        if (hrow >= 0 && hrow < _rows && hcol >= 0 && hcol < _cols && mx >= 0 && my >= 0)
         {
-            if (row != _hoveredRow || col != _hoveredCol)
+            if (hrow != _hoveredRow || hcol != _hoveredCol)
             {
-                _hoveredRow = row;
-                _hoveredCol = col;
-                int idx = row * _cols + col;
+                _hoveredRow = hrow;
+                _hoveredCol = hcol;
+                int idx = hrow * _cols + hcol;
                 if (idx < _values.Length)
                 {
-                    string tip = $"[{row},{col}] = {GetDisplayValue(idx)}";
+                    string tip = $"[{hrow},{hcol}] = {GetDisplayValue(idx)}";
                     if (tip != _lastTooltip)
                     {
                         _tooltip.SetToolTip(this, tip);
@@ -275,12 +369,73 @@ public sealed class HeatmapView : UserControl
         }
         else if (_hoveredRow != -1 || _hoveredCol != -1)
         {
-            _hoveredRow = -1;
-            _hoveredCol = -1;
+            _hoveredRow  = -1;
+            _hoveredCol  = -1;
             _tooltip.SetToolTip(this, string.Empty);
             _lastTooltip = string.Empty;
             Invalidate();
         }
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        if (!_hasData || e.Button != MouseButtons.Left) return;
+
+        if (_isDragSelecting)
+        {
+            _isDragSelecting = false;
+            int r0 = Math.Min(_dragAnchorCell.row,  _dragCurrentCell.row);
+            int r1 = Math.Max(_dragAnchorCell.row,  _dragCurrentCell.row);
+            int c0 = Math.Min(_dragAnchorCell.col,  _dragCurrentCell.col);
+            int c1 = Math.Max(_dragAnchorCell.col,  _dragCurrentCell.col);
+
+            if (!ModifierKeys.HasFlag(Keys.Control))
+                _selectedCells.Clear();
+
+            for (int r = r0; r <= r1; r++)
+                for (int c = c0; c <= c1; c++)
+                    _selectedCells.Add((r, c));
+
+            _anchorCell = _dragAnchorCell;
+            Invalidate();
+            SelectionChanged?.Invoke(_selectedCells);
+        }
+        else
+        {
+            if (!TryGetCellFromPoint(e.Location, out int row, out int col)) return;
+
+            if (ModifierKeys.HasFlag(Keys.Control))
+            {
+                if (!_selectedCells.Remove((row, col)))
+                    _selectedCells.Add((row, col));
+                _anchorCell = (row, col);
+            }
+            else if (!ModifierKeys.HasFlag(Keys.Shift))
+            {
+                _selectedCells.Clear();
+                _selectedCells.Add((row, col));
+                _anchorCell = (row, col);
+            }
+
+            Invalidate();
+            SelectionChanged?.Invoke(_selectedCells);
+            CellSelected?.Invoke(this, new HeatmapCellEventArgs(row, col, GetDisplayValue(row * _cols + col)));
+        }
+    }
+
+    protected override void OnMouseDoubleClick(MouseEventArgs e)
+    {
+        base.OnMouseDoubleClick(e);
+        if (e.Button != MouseButtons.Left) return;
+        if (!TryGetCellFromPoint(e.Location, out int row, out int col)) return;
+
+        _selectedCells.Clear();
+        _selectedCells.Add((row, col));
+        _anchorCell = (row, col);
+        Invalidate();
+        SelectionChanged?.Invoke(_selectedCells);
+        CellActivated?.Invoke(this, new HeatmapCellEventArgs(row, col, GetDisplayValue(row * _cols + col)));
     }
 
     protected override void OnMouseLeave(EventArgs e)
@@ -288,8 +443,8 @@ public sealed class HeatmapView : UserControl
         base.OnMouseLeave(e);
         if (_hoveredRow != -1 || _hoveredCol != -1)
         {
-            _hoveredRow = -1;
-            _hoveredCol = -1;
+            _hoveredRow  = -1;
+            _hoveredCol  = -1;
             _tooltip.SetToolTip(this, string.Empty);
             _lastTooltip = string.Empty;
             Invalidate();
@@ -319,41 +474,12 @@ public sealed class HeatmapView : UserControl
         }
     }
 
-    protected override void OnMouseClick(MouseEventArgs e)
-    {
-        base.OnMouseClick(e);
-        if (e.Button != MouseButtons.Left)
-            return;
+    // -----------------------------------------------------------------------
+    // Layout & helpers
+    // -----------------------------------------------------------------------
 
-        if (!TryGetCellFromPoint(e.Location, out int row, out int col))
-            return;
-
-        SelectCell(row, col);
-        CellSelected?.Invoke(this, new HeatmapCellEventArgs(row, col, GetDisplayValue((row * _cols) + col)));
-    }
-
-    protected override void OnMouseDoubleClick(MouseEventArgs e)
-    {
-        base.OnMouseDoubleClick(e);
-        if (e.Button != MouseButtons.Left)
-            return;
-
-        if (!TryGetCellFromPoint(e.Location, out int row, out int col))
-            return;
-
-        SelectCell(row, col);
-        CellActivated?.Invoke(this, new HeatmapCellEventArgs(row, col, GetDisplayValue((row * _cols) + col)));
-    }
-
-    private float GetCellWidth()
-    {
-        return Math.Max(BaseCellWidth * _zoomFactor, _minimumCellWidth);
-    }
-
-    private float GetCellHeight()
-    {
-        return Math.Max(BaseCellHeight * _zoomFactor, _minimumCellHeight);
-    }
+    private float GetCellWidth()  => Math.Max(BaseCellWidth  * _zoomFactor, _minimumCellWidth);
+    private float GetCellHeight() => Math.Max(BaseCellHeight * _zoomFactor, _minimumCellHeight);
 
     private void UpdateScrollSize() { }
 
@@ -361,11 +487,11 @@ public sealed class HeatmapView : UserControl
     {
         if (!_hasData)
         {
-            _leftMargin = MinLeftMargin;
-            _topMargin = MinTopMargin;
-            _rightMargin = MinRightMargin;
-            _bottomMargin = MinBottomMargin;
-            _minimumCellWidth = BaseCellWidth;
+            _leftMargin      = MinLeftMargin;
+            _topMargin       = MinTopMargin;
+            _rightMargin     = MinRightMargin;
+            _bottomMargin    = MinBottomMargin;
+            _minimumCellWidth  = BaseCellWidth;
             _minimumCellHeight = BaseCellHeight;
             return;
         }
@@ -374,25 +500,22 @@ public sealed class HeatmapView : UserControl
         using var valueFont = CreateValueFont();
         using var labelFont = CreateLabelFont();
 
-        int maxValueWidth = 0;
-        int maxValueHeight = 0;
+        int maxValueWidth = 0, maxValueHeight = 0;
         foreach (string text in _displayValues)
         {
             Size size = TextRenderer.MeasureText(string.IsNullOrEmpty(text) ? " " : text, valueFont, Size.Empty, flags);
-            maxValueWidth = Math.Max(maxValueWidth, size.Width);
+            maxValueWidth  = Math.Max(maxValueWidth,  size.Width);
             maxValueHeight = Math.Max(maxValueHeight, size.Height);
         }
-
-        _minimumCellWidth = Math.Max(BaseCellWidth, maxValueWidth + 10);
+        _minimumCellWidth  = Math.Max(BaseCellWidth,  maxValueWidth  + 10);
         _minimumCellHeight = Math.Max(BaseCellHeight, maxValueHeight + 8);
 
         int maxYLabelWidth = 0;
         if (_yLabels != null)
         {
-            foreach (double value in _yLabels)
+            foreach (double v in _yLabels)
             {
-                string text = FormatAxisValue(value);
-                Size size = TextRenderer.MeasureText(text, labelFont, Size.Empty, flags);
+                Size size = TextRenderer.MeasureText(FormatAxisValue(v), labelFont, Size.Empty, flags);
                 maxYLabelWidth = Math.Max(maxYLabelWidth, size.Width);
             }
         }
@@ -400,10 +523,9 @@ public sealed class HeatmapView : UserControl
         int maxXLabelHeight = 0;
         if (_xLabels != null)
         {
-            foreach (double value in _xLabels)
+            foreach (double v in _xLabels)
             {
-                string text = FormatAxisValue(value);
-                Size size = TextRenderer.MeasureText(text, labelFont, Size.Empty, flags);
+                Size size = TextRenderer.MeasureText(FormatAxisValue(v), labelFont, Size.Empty, flags);
                 maxXLabelHeight = Math.Max(maxXLabelHeight, size.Height);
             }
         }
@@ -414,10 +536,46 @@ public sealed class HeatmapView : UserControl
             TextRenderer.MeasureText(maxLegendText, labelFont, Size.Empty, flags).Width,
             TextRenderer.MeasureText(minLegendText, labelFont, Size.Empty, flags).Width);
 
-        _leftMargin = Math.Max(MinLeftMargin, maxYLabelWidth + 8);
-        _topMargin = Math.Max(MinTopMargin, maxXLabelHeight + 6);
-        _rightMargin = Math.Max(MinRightMargin, LegendGap + LegendWidth + legendLabelWidth + 12);
+        _leftMargin   = Math.Max(MinLeftMargin,  maxYLabelWidth + 8);
+        _topMargin    = Math.Max(MinTopMargin,   maxXLabelHeight + 6);
+        _rightMargin  = Math.Max(MinRightMargin, LegendGap + LegendWidth + legendLabelWidth + 12);
         _bottomMargin = MinBottomMargin;
+    }
+
+    private HeatmapLayout CalculateLayout()
+    {
+        float preferredCellWidth  = GetCellWidth();
+        float preferredCellHeight = GetCellHeight();
+        float availableWidth  = Math.Max(1f, ClientSize.Width  - _leftMargin - _rightMargin);
+        float availableHeight = Math.Max(1f, ClientSize.Height - _topMargin  - _bottomMargin);
+
+        float fittedCellWidth  = _cols > 0 ? availableWidth  / _cols : preferredCellWidth;
+        float fittedCellHeight = _rows > 0 ? availableHeight / _rows : preferredCellHeight;
+        float cellWidth  = Math.Min(preferredCellWidth,  fittedCellWidth);
+        float cellHeight = Math.Min(preferredCellHeight, fittedCellHeight);
+
+        float contentWidth  = _cols * cellWidth;
+        float contentHeight = _rows * cellHeight;
+        float originX = _leftMargin + Math.Max(0f, (availableWidth  - contentWidth)  / 2f);
+        float originY = _topMargin  + Math.Max(0f, (availableHeight - contentHeight) / 2f);
+
+        return new HeatmapLayout(originX, originY, cellWidth, cellHeight,
+                                 originX + contentWidth + LegendGap, originY, contentHeight);
+    }
+
+    private bool TryGetCellFromPoint(Point location, out int row, out int col)
+    {
+        row = -1; col = -1;
+        if (!_hasData) return false;
+
+        HeatmapLayout layout = CalculateLayout();
+        float mx = location.X - layout.OriginX;
+        float my = location.Y - layout.OriginY;
+        if (mx < 0 || my < 0) return false;
+
+        col = (int)(mx / layout.CellWidth);
+        row = (int)(my / layout.CellHeight);
+        return row >= 0 && row < _rows && col >= 0 && col < _cols;
     }
 
     private Font CreateValueFont()
@@ -434,18 +592,13 @@ public sealed class HeatmapView : UserControl
 
     private string GetDisplayValue(int index)
     {
-        if (index >= 0 && index < _displayValues.Length)
-            return _displayValues[index];
-
-        if (index >= 0 && index < _values.Length)
-            return FormatCellValue(_values[index]);
-
+        if (index >= 0 && index < _displayValues.Length) return _displayValues[index];
+        if (index >= 0 && index < _values.Length)        return FormatCellValue(_values[index]);
         return string.Empty;
     }
 
     private static Brush GetCellTextBrush(Color cellColor, Brush darkTextBrush, Brush lightTextBrush)
     {
-        // WCAG-style luminance approximation keeps the text readable across the heat scale.
         double luminance =
             (0.2126 * cellColor.R / 255.0) +
             (0.7152 * cellColor.G / 255.0) +
@@ -457,7 +610,6 @@ public sealed class HeatmapView : UserControl
     {
         if (Math.Abs(value - Math.Round(value)) < 0.000001 && Math.Abs(value) <= long.MaxValue)
             return ((long)Math.Round(value)).ToString();
-
         return value.ToString("G5");
     }
 
@@ -466,54 +618,5 @@ public sealed class HeatmapView : UserControl
         if (value == Math.Floor(value) && Math.Abs(value) < 1e9)
             return ((int)value).ToString();
         return value.ToString("G4");
-    }
-
-    private HeatmapLayout CalculateLayout()
-    {
-        float preferredCellWidth = GetCellWidth();
-        float preferredCellHeight = GetCellHeight();
-        float availableWidth = Math.Max(1f, ClientSize.Width - _leftMargin - _rightMargin);
-        float availableHeight = Math.Max(1f, ClientSize.Height - _topMargin - _bottomMargin);
-
-        float fittedCellWidth = _cols > 0 ? availableWidth / _cols : preferredCellWidth;
-        float fittedCellHeight = _rows > 0 ? availableHeight / _rows : preferredCellHeight;
-        float cellWidth = Math.Min(preferredCellWidth, fittedCellWidth);
-        float cellHeight = Math.Min(preferredCellHeight, fittedCellHeight);
-
-        float contentWidth = _cols * cellWidth;
-        float contentHeight = _rows * cellHeight;
-        float originX = _leftMargin + Math.Max(0f, (availableWidth - contentWidth) / 2f);
-        float originY = _topMargin + Math.Max(0f, (availableHeight - contentHeight) / 2f);
-        float legendX = originX + contentWidth + LegendGap;
-
-        return new HeatmapLayout(originX, originY, cellWidth, cellHeight, legendX, originY, contentHeight);
-    }
-
-    private bool TryGetCellFromPoint(Point location, out int row, out int col)
-    {
-        row = -1;
-        col = -1;
-        if (!_hasData)
-            return false;
-
-        HeatmapLayout layout = CalculateLayout();
-        float mx = location.X - layout.OriginX;
-        float my = location.Y - layout.OriginY;
-        if (mx < 0 || my < 0)
-            return false;
-
-        col = (int)(mx / layout.CellWidth);
-        row = (int)(my / layout.CellHeight);
-        return row >= 0 && row < _rows && col >= 0 && col < _cols;
-    }
-
-    private void SelectCell(int row, int col)
-    {
-        if (_selectedRow == row && _selectedCol == col)
-            return;
-
-        _selectedRow = row;
-        _selectedCol = col;
-        Invalidate();
     }
 }

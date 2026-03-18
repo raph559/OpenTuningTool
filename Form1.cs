@@ -27,10 +27,13 @@ public partial class Form1 : Form
     {
         _settings = AppSettingsStore.Load();
         InitializeComponent();
-        heatmapView.CellSelected += HeatmapView_CellSelected;
-        heatmapView.CellActivated += HeatmapView_CellActivated;
-        surfacePlotView.PointSelected += SurfacePlotView_PointSelected;
-        surfacePlotView.PointActivated += SurfacePlotView_PointActivated;
+        heatmapView.CellSelected    += HeatmapView_CellSelected;
+        heatmapView.CellActivated   += HeatmapView_CellActivated;
+        heatmapView.SelectionChanged += HeatmapView_SelectionChanged;
+        surfacePlotView.PointSelected    += SurfacePlotView_PointSelected;
+        surfacePlotView.PointActivated   += SurfacePlotView_PointActivated;
+        surfacePlotView.SelectionChanged += SurfacePlotView_SelectionChanged;
+        surfacePlotView.PointsValueChanged += SurfacePlotView_PointsValueChanged;
         ApplySettingsToUi();
     }
 
@@ -1126,6 +1129,109 @@ public partial class Form1 : Form
     }
 
     private void BtnResetView3D_Click(object? sender, EventArgs e) => surfacePlotView.ResetView();
+
+    // -----------------------------------------------------------------------
+    // Cross-view selection sync
+    // -----------------------------------------------------------------------
+
+    private bool _syncingSelection;
+
+    private void HeatmapView_SelectionChanged(IReadOnlyCollection<(int row, int col)> cells)
+    {
+        if (_syncingSelection || _selectedTable?.ZAxis == null) return;
+        _syncingSelection = true;
+        try
+        {
+            int cols = _selectedTable.ZAxis.ColCount;
+            surfacePlotView.SetSelectedIndices(cells.Select(c => c.row * cols + c.col));
+
+            dgvMap.ClearSelection();
+            foreach (var (r, c) in cells)
+            {
+                if (r < dgvMap.Rows.Count && c < dgvMap.Columns.Count)
+                    dgvMap.Rows[r].Cells[c].Selected = true;
+            }
+        }
+        finally { _syncingSelection = false; }
+    }
+
+    private void SurfacePlotView_SelectionChanged(IReadOnlyCollection<int> indices)
+    {
+        if (_syncingSelection || _selectedTable?.ZAxis == null) return;
+        _syncingSelection = true;
+        try
+        {
+            int cols = _selectedTable.ZAxis.ColCount;
+            heatmapView.SetSelectedCells(indices.Select(i => (row: i / cols, col: i % cols)));
+
+            dgvMap.ClearSelection();
+            foreach (int i in indices)
+            {
+                int r = i / cols, c = i % cols;
+                if (r < dgvMap.Rows.Count && c < dgvMap.Columns.Count)
+                    dgvMap.Rows[r].Cells[c].Selected = true;
+            }
+        }
+        finally { _syncingSelection = false; }
+    }
+
+    // -----------------------------------------------------------------------
+    // 3D drag value editing — write back to BIN
+    // -----------------------------------------------------------------------
+
+    private void SurfacePlotView_PointsValueChanged(int[] indices, double[] newValues)
+    {
+        if (_bin == null || _selectedTable?.ZAxis == null || _document == null) return;
+
+        var z         = _selectedTable.ZAxis;
+        int absAddr   = _document.BaseOffset + z.Address;
+        int elemBytes = z.ElementSizeBits / 8;
+
+        // Read old values before writing (for undo history)
+        double[] oldValues = new double[indices.Length];
+        for (int i = 0; i < indices.Length; i++)
+        {
+            int offset = absAddr + indices[i] * elemBytes;
+            oldValues[i] = _bin.ReadMap(offset, 1, 1, z.ElementSizeBits, z.Format)[0];
+        }
+
+        // Write new values and record in undo history
+        for (int i = 0; i < indices.Length; i++)
+        {
+            int offset = absAddr + indices[i] * elemBytes;
+            _bin.WriteCell(offset, z.ElementSizeBits, z.Format, newValues[i]);
+            double committed = _bin.ReadMap(offset, 1, 1, z.ElementSizeBits, z.Format)[0];
+            _editHistory.Record(new BinCellEdit(
+                offset, z.ElementSizeBits, z.Format.TypeFlags,
+                PreviousRawValue: oldValues[i],
+                NewRawValue:      committed,
+                Label: $"3D-drag [{indices[i] / z.ColCount},{indices[i] % z.ColCount}]"));
+        }
+
+        // Re-read full map to update views
+        double[] allValues = _bin.ReadMap(absAddr, z.RowCount, z.ColCount, z.ElementSizeBits, z.Format);
+        double[]? xVals = TryReadAxisValues(_selectedTable.XAxis);
+        double[]? yVals = TryReadAxisValues(_selectedTable.YAxis);
+
+        string[] displayValues = new string[allValues.Length];
+        for (int i = 0; i < allValues.Length; i++)
+            displayValues[i] = FormatDisplayValue(allValues[i], z.Format);
+
+        var savedHeatmapSel = heatmapView.SelectedCells.ToHashSet();
+        heatmapView.LoadData(allValues, z.RowCount, z.ColCount, xVals, yVals, displayValues);
+        heatmapView.SetSelectedCells(savedHeatmapSel);
+
+        // Update DGV cells
+        for (int i = 0; i < indices.Length; i++)
+        {
+            int r = indices[i] / z.ColCount, c = indices[i] % z.ColCount;
+            if (r < dgvMap.Rows.Count && c < dgvMap.Columns.Count)
+                dgvMap.Rows[r].Cells[c].Value = displayValues[indices[i]];
+        }
+        dgvMap.Invalidate();
+
+        UpdateTitleBar();
+    }
 
     private void SelectMapCell(int row, int col)
     {

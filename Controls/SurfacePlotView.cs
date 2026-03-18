@@ -4,8 +4,8 @@ namespace OpenTuningTool.Controls;
 
 public sealed class SurfacePointEventArgs(int row, int col, double value) : EventArgs
 {
-    public int Row { get; } = row;
-    public int Col { get; } = col;
+    public int Row   { get; } = row;
+    public int Col   { get; } = col;
     public double Value { get; } = value;
 }
 
@@ -21,23 +21,30 @@ public sealed class SurfacePlotView : UserControl
     private bool _hasData;
 
     // Camera
-    private double _rotX = -30.0; // pitch (degrees)
-    private double _rotY = 45.0;  // yaw (degrees)
+    private double _rotX = -30.0;
+    private double _rotY = 45.0;
     private double _zoom = 1.0;
-    private const double MinZoom = 0.3;
-    private const double MaxZoom = 5.0;
+    private const double MinZoom     = 0.3;
+    private const double MaxZoom     = 5.0;
     private const double Perspective = 0.0012;
 
-    // Mouse drag
-    private bool _isDragging;
-    private Point _lastMouse;
-    private Point _mouseDownLocation;
-    private bool _dragExceededClickThreshold;
+    // Right-click orbit
+    private bool  _isOrbiting;
+    private Point _orbitLastMouse;
+
+    // Left-click interaction
+    private int   _pendingDragIndex = -1;
+    private Point _leftDragStart;
+    private bool  _isValueDragging;
+    private bool  _isBoxSelecting;
+    private Point _boxSelectCurrent;
+    private double[] _dragBaseValues = [];
+    private const int DragThreshold = 5;
 
     // Theme colors
-    private Color _bgColor = Color.FromArgb(30, 30, 30);
-    private Color _fgColor = Color.FromArgb(220, 220, 220);
-    private Color _gridColor = Color.FromArgb(60, 60, 60);
+    private Color _bgColor     = Color.FromArgb(30, 30, 30);
+    private Color _fgColor     = Color.FromArgb(220, 220, 220);
+    private Color _gridColor   = Color.FromArgb(60, 60, 60);
     private Color _accentColor = Color.FromArgb(0, 122, 204);
 
     // Tooltip
@@ -46,43 +53,48 @@ public sealed class SurfacePlotView : UserControl
     // Cached projection
     private PointF[]? _projectedPoints;
     private double[]? _normalizedValues;
-    private int _selectedIndex = -1;
 
+    // Multi-selection
+    private readonly HashSet<int> _selectedIndices = new();
+
+    // Events
     public event EventHandler<SurfacePointEventArgs>? PointSelected;
     public event EventHandler<SurfacePointEventArgs>? PointActivated;
+    public event Action<IReadOnlyCollection<int>>?    SelectionChanged;
+    public event Action<int[], double[]>?             PointsValueChanged;
+
+    public IReadOnlyCollection<int> SelectedIndices => _selectedIndices;
+
+    public void SetSelectedIndices(IEnumerable<int> indices)
+    {
+        _selectedIndices.Clear();
+        _selectedIndices.UnionWith(indices);
+        Invalidate();
+    }
 
     public SurfacePlotView()
     {
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
                  ControlStyles.DoubleBuffer | ControlStyles.ResizeRedraw |
                  ControlStyles.OptimizedDoubleBuffer, true);
-        Cursor = Cursors.SizeAll;
+        Cursor = Cursors.Default;
     }
 
     public void LoadData(double[] values, int rows, int cols, double[]? xLabels, double[]? yLabels)
     {
-        _values = values;
-        _rows = rows;
-        _cols = cols;
+        _values  = (double[])values.Clone();
+        _rows    = rows;
+        _cols    = cols;
         _xLabels = xLabels;
         _yLabels = yLabels;
         _hasData = values.Length > 0 && rows > 0 && cols > 0;
 
+        _selectedIndices.Clear();
+
         if (_hasData)
         {
-            _minVal = values[0];
-            _maxVal = values[0];
-            for (int i = 1; i < values.Length; i++)
-            {
-                if (values[i] < _minVal) _minVal = values[i];
-                if (values[i] > _maxVal) _maxVal = values[i];
-            }
-
-            double range = _maxVal - _minVal;
-            if (range == 0) range = 1;
-            _normalizedValues = new double[values.Length];
-            for (int i = 0; i < values.Length; i++)
-                _normalizedValues[i] = (values[i] - _minVal) / range;
+            RecomputeMinMax();
+            RebuildNormalizedValues();
         }
 
         _projectedPoints = null;
@@ -100,17 +112,38 @@ public sealed class SurfacePlotView : UserControl
 
     public void ApplyThemeColors(Color bg, Color fg, Color grid, Color accent)
     {
-        _bgColor = bg;
-        _fgColor = fg;
-        _gridColor = grid;
+        _bgColor     = bg;
+        _fgColor     = fg;
+        _gridColor   = grid;
         _accentColor = accent;
         Invalidate();
+    }
+
+    private void RecomputeMinMax()
+    {
+        if (_values.Length == 0) return;
+        _minVal = _values[0];
+        _maxVal = _values[0];
+        for (int i = 1; i < _values.Length; i++)
+        {
+            if (_values[i] < _minVal) _minVal = _values[i];
+            if (_values[i] > _maxVal) _maxVal = _values[i];
+        }
+    }
+
+    private void RebuildNormalizedValues()
+    {
+        double range = _maxVal - _minVal;
+        if (range == 0) range = 1;
+        _normalizedValues = new double[_values.Length];
+        for (int i = 0; i < _values.Length; i++)
+            _normalizedValues[i] = (_values[i] - _minVal) / range;
     }
 
     protected override void OnPaint(PaintEventArgs e)
     {
         Graphics g = e.Graphics;
-        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.SmoothingMode     = SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
 
         using var bgBrush = new SolidBrush(_bgColor);
@@ -119,64 +152,53 @@ public sealed class SurfacePlotView : UserControl
         if (!_hasData || _normalizedValues == null)
         {
             using var msgBrush = new SolidBrush(Color.FromArgb(150, _fgColor));
-            using var msgFont = new Font("Segoe UI", 10f, FontStyle.Italic);
+            using var msgFont  = new Font("Segoe UI", 10f, FontStyle.Italic);
             var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
             g.DrawString("No map data to display.", msgFont, msgBrush, ClientRectangle, sf);
             return;
         }
 
-        float cx = Width / 2f;
-        float cy = Height / 2f;
+        float cx    = Width  / 2f;
+        float cy    = Height / 2f;
         float scale = (float)(Math.Min(Width, Height) * 0.29 * _zoom);
 
-        // Convert rotation to radians
         double rxRad = _rotX * Math.PI / 180.0;
         double ryRad = _rotY * Math.PI / 180.0;
         double cosX = Math.Cos(rxRad), sinX = Math.Sin(rxRad);
         double cosY = Math.Cos(ryRad), sinY = Math.Sin(ryRad);
 
+        // Auto-centre the cube
         RectangleF cubeBounds = GetProjectedBounds(cx, cy, scale, cosX, sinX, cosY, sinY);
-        float offsetX = (Width / 2f) - (cubeBounds.Left + cubeBounds.Width / 2f);
-        float offsetY = (Height / 2f) - (cubeBounds.Top + cubeBounds.Height / 2f);
-        cx += offsetX;
-        cy += offsetY;
+        cx += (Width  / 2f) - (cubeBounds.Left + cubeBounds.Width  / 2f);
+        cy += (Height / 2f) - (cubeBounds.Top  + cubeBounds.Height / 2f);
 
-        // Project all grid points
         int totalPts = _rows * _cols;
         var projected = new PointF[totalPts];
-        var depths = new float[totalPts];
+        var depths    = new float[totalPts];
 
         for (int r = 0; r < _rows; r++)
         {
             for (int c = 0; c < _cols; c++)
             {
                 int idx = r * _cols + c;
-                // Map to -1..1 space
                 double x3 = (_cols > 1) ? (2.0 * c / (_cols - 1) - 1.0) : 0;
                 double z3 = (_rows > 1) ? (2.0 * r / (_rows - 1) - 1.0) : 0;
                 double y3 = (idx < _normalizedValues.Length) ? (_normalizedValues[idx] * 2.0) - 1.0 : -1.0;
 
-                // Rotate Y (yaw)
                 double rx = x3 * cosY - z3 * sinY;
                 double rz = x3 * sinY + z3 * cosY;
-
-                // Rotate X (pitch)
-                double ry = y3 * cosX - rz * sinX;
+                double ry  = y3 * cosX - rz * sinX;
                 double rz2 = y3 * sinX + rz * cosX;
 
-                // Perspective projection
-                double perspFactor = 1.0 / (1.0 + rz2 * Perspective * scale);
-                float sx = cx + (float)(rx * scale * perspFactor);
-                float sy = cy - (float)(ry * scale * perspFactor);
-
-                projected[idx] = new PointF(sx, sy);
-                depths[idx] = (float)rz2;
+                double f = 1.0 / (1.0 + rz2 * Perspective * scale);
+                projected[idx] = new PointF(cx + (float)(rx * scale * f),
+                                            cy - (float)(ry * scale * f));
+                depths[idx]    = (float)rz2;
             }
         }
 
         _projectedPoints = projected;
 
-        // Build quads and sort by average depth (painter's algorithm)
         int quadCount = (_rows - 1) * (_cols - 1);
         var quads = new (int tl, int tr, int br, int bl, float depth, double avgNorm)[quadCount];
         int qi = 0;
@@ -190,37 +212,27 @@ public sealed class SurfacePlotView : UserControl
                 int bl = (r + 1) * _cols + c;
                 int br = (r + 1) * _cols + c + 1;
 
-                float avgDepth = (depths[tl] + depths[tr] + depths[bl] + depths[br]) / 4f;
-                double avgNorm = (_normalizedValues[Math.Min(tl, _normalizedValues.Length - 1)] +
-                                  _normalizedValues[Math.Min(tr, _normalizedValues.Length - 1)] +
-                                  _normalizedValues[Math.Min(bl, _normalizedValues.Length - 1)] +
-                                  _normalizedValues[Math.Min(br, _normalizedValues.Length - 1)]) / 4.0;
+                float  avgDepth = (depths[tl] + depths[tr] + depths[bl] + depths[br]) / 4f;
+                double avgNorm  = (_normalizedValues[Math.Min(tl, _normalizedValues.Length - 1)] +
+                                   _normalizedValues[Math.Min(tr, _normalizedValues.Length - 1)] +
+                                   _normalizedValues[Math.Min(bl, _normalizedValues.Length - 1)] +
+                                   _normalizedValues[Math.Min(br, _normalizedValues.Length - 1)]) / 4.0;
 
                 quads[qi++] = (tl, tr, br, bl, avgDepth, avgNorm);
             }
         }
 
-        // Sort back to front (largest depth first)
         Array.Sort(quads, (a, b) => b.depth.CompareTo(a.depth));
-
         DrawCubeGuides(g, cx, cy, scale, cosX, sinX, cosY, sinY);
 
-        // Draw quads
         using var wirePen = new Pen(Color.FromArgb(60, _fgColor), 0.5f);
 
         for (int i = 0; i < quadCount; i++)
         {
             var q = quads[i];
-            PointF[] pts =
-            [
-                projected[q.tl],
-                projected[q.tr],
-                projected[q.br],
-                projected[q.bl]
-            ];
+            PointF[] pts = [ projected[q.tl], projected[q.tr], projected[q.br], projected[q.bl] ];
 
             Color fillColor = ThemeUtility.ValueToHeatColor(q.avgNorm);
-            // Slight shading based on depth for 3D effect
             float shade = Math.Clamp(0.6f + 0.4f * (1f - (q.depth + 1f) / 2f), 0.4f, 1.0f);
             fillColor = Color.FromArgb(
                 (int)(fillColor.R * shade),
@@ -235,195 +247,56 @@ public sealed class SurfacePlotView : UserControl
         DrawCubeFrame(g, cx, cy, scale, cosX, sinX, cosY, sinY);
         DrawAxisOverlay(g, cx, cy, scale, cosX, sinX, cosY, sinY);
 
-        if (_selectedIndex >= 0 && _projectedPoints != null && _selectedIndex < _projectedPoints.Length)
+        // Selected point highlights
+        if (_selectedIndices.Count > 0)
         {
-            PointF selectedPoint = _projectedPoints[_selectedIndex];
-            using var selectedPen = new Pen(_accentColor, 2.5f);
-            using var selectedBrush = new SolidBrush(Color.FromArgb(230, _accentColor));
-            g.FillEllipse(selectedBrush, selectedPoint.X - 4f, selectedPoint.Y - 4f, 8f, 8f);
-            g.DrawEllipse(selectedPen, selectedPoint.X - 7f, selectedPoint.Y - 7f, 14f, 14f);
-        }
-    }
-
-    private void DrawCubeGuides(Graphics g, float cx, float cy, float scale,
-                                double cosX, double sinX, double cosY, double sinY)
-    {
-        using var guidePen = new Pen(Color.FromArgb(38, _fgColor.R, _fgColor.G, _fgColor.B), 0.6f);
-        const int divisions = 4;
-
-        for (int i = 0; i <= divisions; i++)
-        {
-            double t = -1.0 + (2.0 * i / divisions);
-
-            // Floor plane.
-            DrawProjectedLine(g, guidePen, -1, -1, t, 1, -1, t, cx, cy, scale, cosX, sinX, cosY, sinY);
-            DrawProjectedLine(g, guidePen, t, -1, -1, t, -1, 1, cx, cy, scale, cosX, sinX, cosY, sinY);
-
-            // Left wall.
-            DrawProjectedLine(g, guidePen, -1, t, -1, -1, t, 1, cx, cy, scale, cosX, sinX, cosY, sinY);
-            DrawProjectedLine(g, guidePen, -1, -1, t, -1, 1, t, cx, cy, scale, cosX, sinX, cosY, sinY);
-
-            // Rear wall.
-            DrawProjectedLine(g, guidePen, -1, t, 1, 1, t, 1, cx, cy, scale, cosX, sinX, cosY, sinY);
-            DrawProjectedLine(g, guidePen, t, -1, 1, t, 1, 1, cx, cy, scale, cosX, sinX, cosY, sinY);
-        }
-    }
-
-    private void DrawCubeFrame(Graphics g, float cx, float cy, float scale,
-                               double cosX, double sinX, double cosY, double sinY)
-    {
-        using var framePen = new Pen(Color.FromArgb(118, _fgColor.R, _fgColor.G, _fgColor.B), 1f);
-
-        DrawProjectedLine(g, framePen, -1, -1, -1, 1, -1, -1, cx, cy, scale, cosX, sinX, cosY, sinY);
-        DrawProjectedLine(g, framePen, 1, -1, -1, 1, 1, -1, cx, cy, scale, cosX, sinX, cosY, sinY);
-        DrawProjectedLine(g, framePen, 1, 1, -1, -1, 1, -1, cx, cy, scale, cosX, sinX, cosY, sinY);
-        DrawProjectedLine(g, framePen, -1, 1, -1, -1, -1, -1, cx, cy, scale, cosX, sinX, cosY, sinY);
-
-        DrawProjectedLine(g, framePen, -1, -1, 1, 1, -1, 1, cx, cy, scale, cosX, sinX, cosY, sinY);
-        DrawProjectedLine(g, framePen, 1, -1, 1, 1, 1, 1, cx, cy, scale, cosX, sinX, cosY, sinY);
-        DrawProjectedLine(g, framePen, 1, 1, 1, -1, 1, 1, cx, cy, scale, cosX, sinX, cosY, sinY);
-        DrawProjectedLine(g, framePen, -1, 1, 1, -1, -1, 1, cx, cy, scale, cosX, sinX, cosY, sinY);
-
-        DrawProjectedLine(g, framePen, -1, -1, -1, -1, -1, 1, cx, cy, scale, cosX, sinX, cosY, sinY);
-        DrawProjectedLine(g, framePen, 1, -1, -1, 1, -1, 1, cx, cy, scale, cosX, sinX, cosY, sinY);
-        DrawProjectedLine(g, framePen, 1, 1, -1, 1, 1, 1, cx, cy, scale, cosX, sinX, cosY, sinY);
-        DrawProjectedLine(g, framePen, -1, 1, -1, -1, 1, 1, cx, cy, scale, cosX, sinX, cosY, sinY);
-    }
-
-    private void DrawAxisOverlay(Graphics g, float cx, float cy, float scale,
-                                 double cosX, double sinX, double cosY, double sinY)
-    {
-        using var axisPen = new Pen(_accentColor, 1.8f);
-        using var axisBrush = new SolidBrush(_accentColor);
-        using var labelBrush = new SolidBrush(_fgColor);
-        using var axisFont = new Font("Segoe UI", 8f, FontStyle.Bold);
-        using var valueFont = new Font("Consolas", 7.5f);
-
-        PointF origin = Project3D(-1, -1, -1, cx, cy, scale, cosX, sinX, cosY, sinY);
-        PointF xEnd = Project3D(1, -1, -1, cx, cy, scale, cosX, sinX, cosY, sinY);
-        PointF yEnd = Project3D(-1, -1, 1, cx, cy, scale, cosX, sinX, cosY, sinY);
-        PointF zEnd = Project3D(-1, 1, -1, cx, cy, scale, cosX, sinX, cosY, sinY);
-
-        g.DrawLine(axisPen, origin, xEnd);
-        g.DrawLine(axisPen, origin, yEnd);
-        g.DrawLine(axisPen, origin, zEnd);
-        g.FillEllipse(axisBrush, origin.X - 3f, origin.Y - 3f, 6f, 6f);
-
-        DrawAxisText(g, axisFont, axisBrush, "X", xEnd, 6f, -16f);
-        DrawAxisText(g, axisFont, axisBrush, "Y", yEnd, 6f, -16f);
-        DrawAxisText(g, axisFont, axisBrush, "Z", zEnd, 6f, -16f);
-
-        DrawAxisText(g, valueFont, labelBrush, GetXAxisStartLabel(), origin, 8f, 8f);
-        DrawAxisText(g, valueFont, labelBrush, GetXAxisEndLabel(), xEnd, 8f, 8f);
-
-        DrawAxisText(g, valueFont, labelBrush, GetYAxisStartLabel(), origin, -38f, 8f);
-        DrawAxisText(g, valueFont, labelBrush, GetYAxisEndLabel(), yEnd, 8f, 8f);
-
-        DrawAxisText(g, valueFont, labelBrush, GetZStartLabel(), origin, -40f, -14f);
-        DrawAxisText(g, valueFont, labelBrush, GetZEndLabel(), zEnd, 8f, -2f);
-    }
-
-    private static void DrawAxisText(Graphics g, Font font, Brush brush, string text, PointF anchor, float offsetX, float offsetY)
-    {
-        g.DrawString(text, font, brush, anchor.X + offsetX, anchor.Y + offsetY);
-    }
-
-    private void DrawProjectedLine(Graphics g, Pen pen,
-                                   double x1, double y1, double z1,
-                                   double x2, double y2, double z2,
-                                   float cx, float cy, float scale,
-                                   double cosX, double sinX, double cosY, double sinY)
-    {
-        PointF p1 = Project3D(x1, y1, z1, cx, cy, scale, cosX, sinX, cosY, sinY);
-        PointF p2 = Project3D(x2, y2, z2, cx, cy, scale, cosX, sinX, cosY, sinY);
-        g.DrawLine(pen, p1, p2);
-    }
-
-    private string GetXAxisStartLabel() => GetAxisLabel(_xLabels, 0, 0);
-
-    private string GetXAxisEndLabel() => GetAxisLabel(_xLabels, Math.Max(0, _cols - 1), Math.Max(0, _cols - 1));
-
-    private string GetYAxisStartLabel() => GetAxisLabel(_yLabels, 0, 0);
-
-    private string GetYAxisEndLabel() => GetAxisLabel(_yLabels, Math.Max(0, _rows - 1), Math.Max(0, _rows - 1));
-
-    private string GetZStartLabel() => FormatAxisValue(_minVal);
-
-    private string GetZEndLabel() => FormatAxisValue(_maxVal);
-
-    private static string GetAxisLabel(double[]? labels, int preferredIndex, int fallbackValue)
-    {
-        if (labels == null || labels.Length == 0)
-            return fallbackValue.ToString();
-
-        int safeIndex = Math.Clamp(preferredIndex, 0, labels.Length - 1);
-        return FormatAxisValue(labels[safeIndex]);
-    }
-
-    private static string FormatAxisValue(double value)
-    {
-        if (Math.Abs(value - Math.Round(value)) < 0.000001 && Math.Abs(value) <= long.MaxValue)
-            return ((long)Math.Round(value)).ToString();
-
-        return value.ToString("G5");
-    }
-
-    private RectangleF GetProjectedBounds(float cx, float cy, float scale,
-                                          double cosX, double sinX, double cosY, double sinY)
-    {
-        PointF[] corners =
-        [
-            Project3D(-1, -1, -1, cx, cy, scale, cosX, sinX, cosY, sinY),
-            Project3D(1, -1, -1, cx, cy, scale, cosX, sinX, cosY, sinY),
-            Project3D(1, 1, -1, cx, cy, scale, cosX, sinX, cosY, sinY),
-            Project3D(-1, 1, -1, cx, cy, scale, cosX, sinX, cosY, sinY),
-            Project3D(-1, -1, 1, cx, cy, scale, cosX, sinX, cosY, sinY),
-            Project3D(1, -1, 1, cx, cy, scale, cosX, sinX, cosY, sinY),
-            Project3D(1, 1, 1, cx, cy, scale, cosX, sinX, cosY, sinY),
-            Project3D(-1, 1, 1, cx, cy, scale, cosX, sinX, cosY, sinY),
-        ];
-
-        float minX = corners[0].X;
-        float maxX = corners[0].X;
-        float minY = corners[0].Y;
-        float maxY = corners[0].Y;
-
-        for (int i = 1; i < corners.Length; i++)
-        {
-            minX = Math.Min(minX, corners[i].X);
-            maxX = Math.Max(maxX, corners[i].X);
-            minY = Math.Min(minY, corners[i].Y);
-            maxY = Math.Max(maxY, corners[i].Y);
+            using var selFill = new SolidBrush(Color.FromArgb(230, _accentColor));
+            using var selRing = new Pen(_accentColor, 2.5f);
+            foreach (int idx in _selectedIndices)
+            {
+                if (idx < 0 || idx >= projected.Length) continue;
+                var pt = projected[idx];
+                g.FillEllipse(selFill, pt.X - 4f, pt.Y - 4f, 8f, 8f);
+                g.DrawEllipse(selRing, pt.X - 7f, pt.Y - 7f, 14f, 14f);
+            }
         }
 
-        return RectangleF.FromLTRB(minX, minY, maxX, maxY);
+        // Box-select rubber band
+        if (_isBoxSelecting)
+        {
+            var rect = GetBoxRect();
+            using var bandFill = new SolidBrush(Color.FromArgb(30, 255, 255, 255));
+            using var bandPen  = new Pen(Color.White, 1f) { DashStyle = DashStyle.Dash };
+            g.FillRectangle(bandFill, rect);
+            g.DrawRectangle(bandPen, rect);
+        }
+
+        using var hintFont  = new Font("Segoe UI", 7.5f);
+        using var hintBrush = new SolidBrush(Color.FromArgb(80, _fgColor));
+        g.DrawString(
+            "Right-drag orbit  ·  Left-click select  ·  Drag point to edit  ·  Wheel zoom  ·  Dbl-click reset",
+            hintFont, hintBrush, 8f, Height - 18f);
     }
 
-    private PointF Project3D(double x3, double y3, double z3,
-                              float cx, float cy, float scale,
-                              double cosX, double sinX, double cosY, double sinY)
-    {
-        double rx = x3 * cosY - z3 * sinY;
-        double rz = x3 * sinY + z3 * cosY;
-        double ry = y3 * cosX - rz * sinX;
-        double rz2 = y3 * sinX + rz * cosX;
-
-        double perspFactor = 1.0 / (1.0 + rz2 * Perspective * scale);
-        float sx = cx + (float)(rx * scale * perspFactor);
-        float sy = cy - (float)(ry * scale * perspFactor);
-        return new PointF(sx, sy);
-    }
+    // -----------------------------------------------------------------------
+    // Mouse handling
+    // -----------------------------------------------------------------------
 
     protected override void OnMouseDown(MouseEventArgs e)
     {
         base.OnMouseDown(e);
-        if (e.Button == MouseButtons.Left)
+
+        if (e.Button == MouseButtons.Right)
         {
-            _isDragging = true;
-            _lastMouse = e.Location;
-            _mouseDownLocation = e.Location;
-            _dragExceededClickThreshold = false;
-            Cursor = Cursors.Hand;
+            _isOrbiting     = true;
+            _orbitLastMouse = e.Location;
+            Cursor          = Cursors.Hand;
+        }
+        else if (e.Button == MouseButtons.Left && _hasData)
+        {
+            _pendingDragIndex = FindNearestPoint(e.Location, 20f);
+            _leftDragStart    = e.Location;
+            _boxSelectCurrent = e.Location;
         }
     }
 
@@ -431,81 +304,175 @@ public sealed class SurfacePlotView : UserControl
     {
         base.OnMouseMove(e);
 
-        if (_isDragging)
+        if (_isOrbiting)
         {
-            int dx = e.X - _lastMouse.X;
-            int dy = e.Y - _lastMouse.Y;
-            if (!_dragExceededClickThreshold)
-            {
-                int clickDx = e.X - _mouseDownLocation.X;
-                int clickDy = e.Y - _mouseDownLocation.Y;
-                _dragExceededClickThreshold = (clickDx * clickDx) + (clickDy * clickDy) > 25;
-            }
-
+            int dx = e.X - _orbitLastMouse.X;
+            int dy = e.Y - _orbitLastMouse.Y;
             _rotY += dx * 0.5;
             _rotX += dy * 0.5;
             _rotX = Math.Clamp(_rotX, -89, 89);
-            _lastMouse = e.Location;
+            _orbitLastMouse  = e.Location;
             _projectedPoints = null;
             Invalidate();
+            return;
         }
-        else if (_hasData && _projectedPoints != null)
+
+        if (e.Button == MouseButtons.Left)
         {
-            // Find nearest point for tooltip
-            float bestDist = 20f * 20f; // 20px threshold
-            int bestIdx = -1;
-            for (int i = 0; i < _projectedPoints.Length; i++)
+            int dx = e.X - _leftDragStart.X;
+            int dy = e.Y - _leftDragStart.Y;
+            bool pastThreshold = Math.Abs(dx) > DragThreshold || Math.Abs(dy) > DragThreshold;
+
+            if (pastThreshold && !_isValueDragging && !_isBoxSelecting)
             {
-                float dx = _projectedPoints[i].X - e.X;
-                float dy = _projectedPoints[i].Y - e.Y;
-                float d2 = dx * dx + dy * dy;
-                if (d2 < bestDist)
+                if (_pendingDragIndex >= 0)
                 {
-                    bestDist = d2;
-                    bestIdx = i;
+                    _isValueDragging = true;
+                    _dragBaseValues  = (double[])_values.Clone();
+                    Cursor           = Cursors.SizeNS;
+                }
+                else
+                {
+                    _isBoxSelecting = true;
+                    Cursor          = Cursors.Cross;
                 }
             }
 
-            if (bestIdx >= 0 && bestIdx < _values.Length)
+            if (_isValueDragging)
             {
-                int r = bestIdx / _cols;
-                int c = bestIdx % _cols;
-                _tooltip.SetToolTip(this, $"[{r},{c}] = {_values[bestIdx]:G6}");
+                double range = _maxVal - _minVal;
+                if (range == 0) range = 1.0;
+                double valueDelta = -(double)dy * range / Math.Max(Height, 1);
+
+                IEnumerable<int> targets = _selectedIndices.Count > 0
+                    ? _selectedIndices
+                    : Enumerable.Repeat(_pendingDragIndex, 1);
+
+                foreach (int idx in targets)
+                {
+                    if (idx >= 0 && idx < _values.Length)
+                        _values[idx] = _dragBaseValues[idx] + valueDelta;
+                }
+
+                RecomputeMinMax();
+                RebuildNormalizedValues();
+                _projectedPoints = null;
+                Invalidate();
             }
-            else
+            else if (_isBoxSelecting)
             {
-                _tooltip.SetToolTip(this, string.Empty);
+                _boxSelectCurrent = e.Location;
+                Invalidate();
             }
+            return;
+        }
+
+        // Hover tooltip (no button held)
+        if (!_hasData || _projectedPoints == null) return;
+
+        int nearest = FindNearestPoint(e.Location, 20f);
+        if (nearest >= 0 && nearest < _values.Length)
+        {
+            int r = nearest / _cols;
+            int c = nearest % _cols;
+            _tooltip.SetToolTip(this, $"[{r},{c}] = {_values[nearest]:G6}");
+            Cursor = Cursors.Hand;
+        }
+        else
+        {
+            _tooltip.SetToolTip(this, string.Empty);
+            Cursor = Cursors.Default;
         }
     }
 
     protected override void OnMouseUp(MouseEventArgs e)
     {
         base.OnMouseUp(e);
-        if (e.Button == MouseButtons.Left)
+
+        if (e.Button == MouseButtons.Right && _isOrbiting)
         {
-            if (!_dragExceededClickThreshold && TryGetNearestPointIndex(e.Location, out int selectedIndex))
+            _isOrbiting = false;
+            Cursor       = Cursors.Default;
+            return;
+        }
+
+        if (e.Button != MouseButtons.Left) return;
+
+        if (_isValueDragging)
+        {
+            _isValueDragging = false;
+            Cursor = Cursors.Default;
+
+            IEnumerable<int> targets = _selectedIndices.Count > 0
+                ? _selectedIndices
+                : Enumerable.Repeat(_pendingDragIndex, 1);
+
+            int[]    changedIndices = targets.Where(i => i >= 0 && i < _values.Length).Distinct().ToArray();
+            double[] changedValues  = changedIndices.Select(i => _values[i]).ToArray();
+
+            if (changedIndices.Length > 0)
+                PointsValueChanged?.Invoke(changedIndices, changedValues);
+        }
+        else if (_isBoxSelecting)
+        {
+            _isBoxSelecting = false;
+            Cursor = Cursors.Default;
+
+            if (!ModifierKeys.HasFlag(Keys.Control))
+                _selectedIndices.Clear();
+
+            if (_projectedPoints != null)
             {
-                SelectPoint(selectedIndex);
-                PointSelected?.Invoke(this, CreateEventArgs(selectedIndex));
+                var rect = GetBoxRect();
+                for (int i = 0; i < _projectedPoints.Length; i++)
+                {
+                    if (rect.Contains((int)_projectedPoints[i].X, (int)_projectedPoints[i].Y))
+                        _selectedIndices.Add(i);
+                }
             }
 
-            _isDragging = false;
-            Cursor = Cursors.SizeAll;
+            Invalidate();
+            SelectionChanged?.Invoke(_selectedIndices);
         }
+        else
+        {
+            // Simple click
+            if (!ModifierKeys.HasFlag(Keys.Control))
+            {
+                _selectedIndices.Clear();
+                if (_pendingDragIndex >= 0)
+                    _selectedIndices.Add(_pendingDragIndex);
+            }
+            else if (_pendingDragIndex >= 0)
+            {
+                if (!_selectedIndices.Remove(_pendingDragIndex))
+                    _selectedIndices.Add(_pendingDragIndex);
+            }
+
+            Invalidate();
+            SelectionChanged?.Invoke(_selectedIndices);
+
+            // Fire legacy single-point event
+            if (_pendingDragIndex >= 0 && _pendingDragIndex < _values.Length)
+                PointSelected?.Invoke(this, CreateEventArgs(_pendingDragIndex));
+        }
+
+        _pendingDragIndex = -1;
     }
 
     protected override void OnMouseDoubleClick(MouseEventArgs e)
     {
         base.OnMouseDoubleClick(e);
-        if (e.Button != MouseButtons.Left)
-            return;
+        if (e.Button != MouseButtons.Left) return;
 
-        if (!TryGetNearestPointIndex(e.Location, out int selectedIndex))
-            return;
+        int idx = FindNearestPoint(e.Location, 14f);
+        if (idx < 0 || idx >= _values.Length) return;
 
-        SelectPoint(selectedIndex);
-        PointActivated?.Invoke(this, CreateEventArgs(selectedIndex));
+        _selectedIndices.Clear();
+        _selectedIndices.Add(idx);
+        Invalidate();
+        SelectionChanged?.Invoke(_selectedIndices);
+        PointActivated?.Invoke(this, CreateEventArgs(idx));
     }
 
     protected override void OnMouseWheel(MouseEventArgs e)
@@ -517,41 +484,175 @@ public sealed class SurfacePlotView : UserControl
         Invalidate();
     }
 
-    private bool TryGetNearestPointIndex(Point location, out int index)
-    {
-        index = -1;
-        if (!_hasData || _projectedPoints == null || _projectedPoints.Length == 0)
-            return false;
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
 
-        float bestDist = 14f * 14f;
+    private int FindNearestPoint(Point mousePos, float maxDistPx)
+    {
+        if (_projectedPoints == null) return -1;
+        float bestDist = maxDistPx * maxDistPx;
+        int   bestIdx  = -1;
         for (int i = 0; i < _projectedPoints.Length; i++)
         {
-            float dx = _projectedPoints[i].X - location.X;
-            float dy = _projectedPoints[i].Y - location.Y;
+            float dx = _projectedPoints[i].X - mousePos.X;
+            float dy = _projectedPoints[i].Y - mousePos.Y;
             float d2 = dx * dx + dy * dy;
-            if (d2 < bestDist)
-            {
-                bestDist = d2;
-                index = i;
-            }
+            if (d2 < bestDist) { bestDist = d2; bestIdx = i; }
         }
-
-        return index >= 0 && index < _values.Length;
+        return bestIdx;
     }
 
-    private void SelectPoint(int index)
+    private Rectangle GetBoxRect()
     {
-        if (_selectedIndex == index)
-            return;
-
-        _selectedIndex = index;
-        Invalidate();
+        int x = Math.Min(_leftDragStart.X, _boxSelectCurrent.X);
+        int y = Math.Min(_leftDragStart.Y, _boxSelectCurrent.Y);
+        int w = Math.Abs(_leftDragStart.X - _boxSelectCurrent.X);
+        int h = Math.Abs(_leftDragStart.Y - _boxSelectCurrent.Y);
+        return new Rectangle(x, y, w, h);
     }
 
     private SurfacePointEventArgs CreateEventArgs(int index)
+        => new(index / _cols, index % _cols, _values[index]);
+
+    // -----------------------------------------------------------------------
+    // Drawing helpers
+    // -----------------------------------------------------------------------
+
+    private void DrawCubeGuides(Graphics g, float cx, float cy, float scale,
+                                double cosX, double sinX, double cosY, double sinY)
     {
-        int row = index / _cols;
-        int col = index % _cols;
-        return new SurfacePointEventArgs(row, col, _values[index]);
+        using var guidePen = new Pen(Color.FromArgb(38, _fgColor.R, _fgColor.G, _fgColor.B), 0.6f);
+        const int divisions = 4;
+        for (int i = 0; i <= divisions; i++)
+        {
+            double t = -1.0 + (2.0 * i / divisions);
+            DrawProjectedLine(g, guidePen, -1, -1, t, 1, -1, t, cx, cy, scale, cosX, sinX, cosY, sinY);
+            DrawProjectedLine(g, guidePen, t, -1, -1, t, -1, 1, cx, cy, scale, cosX, sinX, cosY, sinY);
+            DrawProjectedLine(g, guidePen, -1, t, -1, -1, t, 1, cx, cy, scale, cosX, sinX, cosY, sinY);
+            DrawProjectedLine(g, guidePen, -1, -1, t, -1, 1, t, cx, cy, scale, cosX, sinX, cosY, sinY);
+            DrawProjectedLine(g, guidePen, -1, t, 1, 1, t, 1, cx, cy, scale, cosX, sinX, cosY, sinY);
+            DrawProjectedLine(g, guidePen, t, -1, 1, t, 1, 1, cx, cy, scale, cosX, sinX, cosY, sinY);
+        }
+    }
+
+    private void DrawCubeFrame(Graphics g, float cx, float cy, float scale,
+                               double cosX, double sinX, double cosY, double sinY)
+    {
+        using var framePen = new Pen(Color.FromArgb(118, _fgColor.R, _fgColor.G, _fgColor.B), 1f);
+        DrawProjectedLine(g, framePen, -1, -1, -1,  1, -1, -1, cx, cy, scale, cosX, sinX, cosY, sinY);
+        DrawProjectedLine(g, framePen,  1, -1, -1,  1,  1, -1, cx, cy, scale, cosX, sinX, cosY, sinY);
+        DrawProjectedLine(g, framePen,  1,  1, -1, -1,  1, -1, cx, cy, scale, cosX, sinX, cosY, sinY);
+        DrawProjectedLine(g, framePen, -1,  1, -1, -1, -1, -1, cx, cy, scale, cosX, sinX, cosY, sinY);
+        DrawProjectedLine(g, framePen, -1, -1,  1,  1, -1,  1, cx, cy, scale, cosX, sinX, cosY, sinY);
+        DrawProjectedLine(g, framePen,  1, -1,  1,  1,  1,  1, cx, cy, scale, cosX, sinX, cosY, sinY);
+        DrawProjectedLine(g, framePen,  1,  1,  1, -1,  1,  1, cx, cy, scale, cosX, sinX, cosY, sinY);
+        DrawProjectedLine(g, framePen, -1,  1,  1, -1, -1,  1, cx, cy, scale, cosX, sinX, cosY, sinY);
+        DrawProjectedLine(g, framePen, -1, -1, -1, -1, -1,  1, cx, cy, scale, cosX, sinX, cosY, sinY);
+        DrawProjectedLine(g, framePen,  1, -1, -1,  1, -1,  1, cx, cy, scale, cosX, sinX, cosY, sinY);
+        DrawProjectedLine(g, framePen,  1,  1, -1,  1,  1,  1, cx, cy, scale, cosX, sinX, cosY, sinY);
+        DrawProjectedLine(g, framePen, -1,  1, -1, -1,  1,  1, cx, cy, scale, cosX, sinX, cosY, sinY);
+    }
+
+    private void DrawAxisOverlay(Graphics g, float cx, float cy, float scale,
+                                 double cosX, double sinX, double cosY, double sinY)
+    {
+        using var axisPen    = new Pen(_accentColor, 1.8f);
+        using var axisBrush  = new SolidBrush(_accentColor);
+        using var labelBrush = new SolidBrush(_fgColor);
+        using var axisFont   = new Font("Segoe UI", 8f, FontStyle.Bold);
+        using var valueFont  = new Font("Consolas", 7.5f);
+
+        PointF origin = Project3D(-1, -1, -1, cx, cy, scale, cosX, sinX, cosY, sinY);
+        PointF xEnd   = Project3D( 1, -1, -1, cx, cy, scale, cosX, sinX, cosY, sinY);
+        PointF yEnd   = Project3D(-1, -1,  1, cx, cy, scale, cosX, sinX, cosY, sinY);
+        PointF zEnd   = Project3D(-1,  1, -1, cx, cy, scale, cosX, sinX, cosY, sinY);
+
+        g.DrawLine(axisPen, origin, xEnd);
+        g.DrawLine(axisPen, origin, yEnd);
+        g.DrawLine(axisPen, origin, zEnd);
+        g.FillEllipse(axisBrush, origin.X - 3f, origin.Y - 3f, 6f, 6f);
+
+        DrawAxisText(g, axisFont, axisBrush, "X", xEnd, 6f, -16f);
+        DrawAxisText(g, axisFont, axisBrush, "Y", yEnd, 6f, -16f);
+        DrawAxisText(g, axisFont, axisBrush, "Z", zEnd, 6f, -16f);
+
+        DrawAxisText(g, valueFont, labelBrush, GetXAxisStartLabel(), origin,  8f,  8f);
+        DrawAxisText(g, valueFont, labelBrush, GetXAxisEndLabel(),   xEnd,    8f,  8f);
+        DrawAxisText(g, valueFont, labelBrush, GetYAxisStartLabel(), origin, -38f, 8f);
+        DrawAxisText(g, valueFont, labelBrush, GetYAxisEndLabel(),   yEnd,    8f,  8f);
+        DrawAxisText(g, valueFont, labelBrush, GetZStartLabel(),     origin, -40f, -14f);
+        DrawAxisText(g, valueFont, labelBrush, GetZEndLabel(),       zEnd,    8f,  -2f);
+    }
+
+    private static void DrawAxisText(Graphics g, Font font, Brush brush, string text,
+                                     PointF anchor, float offsetX, float offsetY)
+        => g.DrawString(text, font, brush, anchor.X + offsetX, anchor.Y + offsetY);
+
+    private void DrawProjectedLine(Graphics g, Pen pen,
+                                   double x1, double y1, double z1,
+                                   double x2, double y2, double z2,
+                                   float cx, float cy, float scale,
+                                   double cosX, double sinX, double cosY, double sinY)
+        => g.DrawLine(pen,
+            Project3D(x1, y1, z1, cx, cy, scale, cosX, sinX, cosY, sinY),
+            Project3D(x2, y2, z2, cx, cy, scale, cosX, sinX, cosY, sinY));
+
+    private string GetXAxisStartLabel() => GetAxisLabel(_xLabels, 0, 0);
+    private string GetXAxisEndLabel()   => GetAxisLabel(_xLabels, Math.Max(0, _cols - 1), Math.Max(0, _cols - 1));
+    private string GetYAxisStartLabel() => GetAxisLabel(_yLabels, 0, 0);
+    private string GetYAxisEndLabel()   => GetAxisLabel(_yLabels, Math.Max(0, _rows - 1), Math.Max(0, _rows - 1));
+    private string GetZStartLabel()     => FormatAxisValue(_minVal);
+    private string GetZEndLabel()       => FormatAxisValue(_maxVal);
+
+    private static string GetAxisLabel(double[]? labels, int preferredIndex, int fallbackValue)
+    {
+        if (labels == null || labels.Length == 0) return fallbackValue.ToString();
+        return FormatAxisValue(labels[Math.Clamp(preferredIndex, 0, labels.Length - 1)]);
+    }
+
+    private static string FormatAxisValue(double value)
+    {
+        if (Math.Abs(value - Math.Round(value)) < 0.000001 && Math.Abs(value) <= long.MaxValue)
+            return ((long)Math.Round(value)).ToString();
+        return value.ToString("G5");
+    }
+
+    private RectangleF GetProjectedBounds(float cx, float cy, float scale,
+                                          double cosX, double sinX, double cosY, double sinY)
+    {
+        PointF[] corners =
+        [
+            Project3D(-1, -1, -1, cx, cy, scale, cosX, sinX, cosY, sinY),
+            Project3D( 1, -1, -1, cx, cy, scale, cosX, sinX, cosY, sinY),
+            Project3D( 1,  1, -1, cx, cy, scale, cosX, sinX, cosY, sinY),
+            Project3D(-1,  1, -1, cx, cy, scale, cosX, sinX, cosY, sinY),
+            Project3D(-1, -1,  1, cx, cy, scale, cosX, sinX, cosY, sinY),
+            Project3D( 1, -1,  1, cx, cy, scale, cosX, sinX, cosY, sinY),
+            Project3D( 1,  1,  1, cx, cy, scale, cosX, sinX, cosY, sinY),
+            Project3D(-1,  1,  1, cx, cy, scale, cosX, sinX, cosY, sinY),
+        ];
+
+        float minX = corners[0].X, maxX = corners[0].X;
+        float minY = corners[0].Y, maxY = corners[0].Y;
+        for (int i = 1; i < corners.Length; i++)
+        {
+            minX = Math.Min(minX, corners[i].X); maxX = Math.Max(maxX, corners[i].X);
+            minY = Math.Min(minY, corners[i].Y); maxY = Math.Max(maxY, corners[i].Y);
+        }
+        return RectangleF.FromLTRB(minX, minY, maxX, maxY);
+    }
+
+    private PointF Project3D(double x3, double y3, double z3,
+                              float cx, float cy, float scale,
+                              double cosX, double sinX, double cosY, double sinY)
+    {
+        double rx  = x3 * cosY - z3 * sinY;
+        double rz  = x3 * sinY + z3 * cosY;
+        double ry  = y3 * cosX - rz * sinX;
+        double rz2 = y3 * sinX + rz * cosX;
+        double f   = 1.0 / (1.0 + rz2 * Perspective * scale);
+        return new PointF(cx + (float)(rx * scale * f),
+                          cy - (float)(ry * scale * f));
     }
 }
