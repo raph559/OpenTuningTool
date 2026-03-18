@@ -295,20 +295,6 @@ public sealed class SurfacePlotView : UserControl
         else if (e.Button == MouseButtons.Left && _hasData)
         {
             _pendingDragIndex = FindNearestPoint(e.Location, 20f);
-
-            // Immediately select the clicked point (or clear if on empty space)
-            if (_pendingDragIndex >= 0)
-            {
-                _selectedIndices.Clear();
-                _selectedIndices.Add(_pendingDragIndex);
-            }
-            else
-            {
-                _selectedIndices.Clear();
-            }
-            Invalidate();
-            SelectionChanged?.Invoke(_selectedIndices);
-
             _leftDragStart    = e.Location;
             _boxSelectCurrent = e.Location;
         }
@@ -348,7 +334,8 @@ public sealed class SurfacePlotView : UserControl
                 }
                 else if (_pendingDragIndex < 0)
                 {
-                    // Drag on empty space to box-select
+                    // Drag on empty space to box-select (replaces selection)
+                    _selectedIndices.Clear();
                     _isBoxSelecting = true;
                     Cursor          = Cursors.Cross;
                 }
@@ -432,7 +419,7 @@ public sealed class SurfacePlotView : UserControl
             _isBoxSelecting = false;
             Cursor = Cursors.SizeAll;
 
-            // Selection already cleared in OnMouseDown; add points in box
+            // Add points in box to selection
             if (_projectedPoints != null)
             {
                 var rect = GetBoxRect();
@@ -448,9 +435,17 @@ public sealed class SurfacePlotView : UserControl
         }
         else
         {
-            // Simple click - selection already done in OnMouseDown
-            if (_pendingDragIndex >= 0 && _pendingDragIndex < _values.Length)
-                PointSelected?.Invoke(this, CreateEventArgs(_pendingDragIndex));
+            // Simple click - select the point
+            if (_pendingDragIndex >= 0)
+            {
+                _selectedIndices.Clear();
+                _selectedIndices.Add(_pendingDragIndex);
+                Invalidate();
+                SelectionChanged?.Invoke(_selectedIndices);
+
+                if (_pendingDragIndex < _values.Length)
+                    PointSelected?.Invoke(this, CreateEventArgs(_pendingDragIndex));
+            }
         }
 
         _pendingDragIndex = -1;
