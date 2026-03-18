@@ -274,7 +274,7 @@ public sealed class SurfacePlotView : UserControl
         using var hintFont  = new Font("Segoe UI", 7.5f);
         using var hintBrush = new SolidBrush(Color.FromArgb(80, _fgColor));
         g.DrawString(
-            "Right-drag orbit  ·  Ctrl+click select  ·  Ctrl+drag multi-select  ·  Drag point to edit  ·  Wheel zoom",
+            "Right-drag orbit  ·  Left-click select  ·  Ctrl+click toggle  ·  Ctrl+drag multi-select  ·  Drag point to edit  ·  Wheel zoom",
             hintFont, hintBrush, 8f, Height - 18f);
     }
 
@@ -451,11 +451,15 @@ public sealed class SurfacePlotView : UserControl
         }
         else
         {
-            // Simple click - only select if Ctrl is held
-            if (ModifierKeys.HasFlag(Keys.Control) && _pendingDragIndex >= 0)
+            // Simple click - select to allow dragging
+            if (_pendingDragIndex >= 0)
             {
-                if (!_selectedIndices.Remove(_pendingDragIndex))
-                    _selectedIndices.Add(_pendingDragIndex);
+                // If Ctrl held: toggle; otherwise: replace selection
+                if (!ModifierKeys.HasFlag(Keys.Control))
+                {
+                    _selectedIndices.Clear();
+                }
+                _selectedIndices.Add(_pendingDragIndex);
                 Invalidate();
                 SelectionChanged?.Invoke(_selectedIndices);
 

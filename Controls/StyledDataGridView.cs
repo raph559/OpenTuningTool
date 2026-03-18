@@ -2,9 +2,20 @@ using System.Reflection;
 
 namespace OpenTuningTool.Controls;
 
+public sealed class MultiCellEditingEventArgs(string? text, bool apply) : EventArgs
+{
+    public string? Text { get; } = text;
+    public bool Apply { get; } = apply;
+}
+
 public sealed class StyledDataGridView : DataGridView
 {
     private int _hoveredRow = -1;
+    private bool _isMultiEditing;
+    private string _multiEditBuffer = "";
+
+    public event EventHandler<MultiCellEditingEventArgs>? MultiCellEditing;
+
     private Color _bgColor = Color.FromArgb(30, 30, 30);
     private Color _surfaceColor = Color.FromArgb(37, 37, 38);
     private Color _inputColor = Color.FromArgb(45, 45, 48);
@@ -30,6 +41,63 @@ public sealed class StyledDataGridView : DataGridView
         ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
         ColumnHeadersHeight = 30;
         RowTemplate.Height = 24;
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (SelectedCells.Count > 1)
+        {
+            if (e.KeyCode == Keys.Enter)
+            {
+                if (_isMultiEditing)
+                {
+                    MultiCellEditing?.Invoke(this, new MultiCellEditingEventArgs(_multiEditBuffer, true));
+                    _isMultiEditing = false;
+                    _multiEditBuffer = "";
+                    e.Handled = true;
+                    return;
+                }
+            }
+            else if (e.KeyCode == Keys.Escape)
+            {
+                if (_isMultiEditing)
+                {
+                    _isMultiEditing = false;
+                    _multiEditBuffer = "";
+                    MultiCellEditing?.Invoke(this, new MultiCellEditingEventArgs(null, false));
+                    e.Handled = true;
+                    return;
+                }
+            }
+            else if (e.KeyCode == Keys.Back)
+            {
+                if (_isMultiEditing && _multiEditBuffer.Length > 0)
+                {
+                    _multiEditBuffer = _multiEditBuffer[..^1];
+                    MultiCellEditing?.Invoke(this, new MultiCellEditingEventArgs(_multiEditBuffer, false));
+                    e.Handled = true;
+                    return;
+                }
+            }
+        }
+        base.OnKeyDown(e);
+    }
+
+    protected override void OnKeyPress(KeyPressEventArgs e)
+    {
+        if (SelectedCells.Count > 1 && !char.IsControl(e.KeyChar))
+        {
+            if (!_isMultiEditing)
+            {
+                _isMultiEditing = true;
+                _multiEditBuffer = "";
+            }
+            _multiEditBuffer += e.KeyChar;
+            MultiCellEditing?.Invoke(this, new MultiCellEditingEventArgs(_multiEditBuffer, false));
+            e.Handled = true;
+            return;
+        }
+        base.OnKeyPress(e);
     }
 
     public void ApplyThemeColors(Color bg, Color surface, Color input, Color fg, Color accent, Color grid)

@@ -34,6 +34,7 @@ public partial class Form1 : Form
         surfacePlotView.PointActivated   += SurfacePlotView_PointActivated;
         surfacePlotView.SelectionChanged += SurfacePlotView_SelectionChanged;
         surfacePlotView.PointsValueChanged += SurfacePlotView_PointsValueChanged;
+        dgvMap.MultiCellEditing += DgvMap_MultiCellEditing;
         ApplySettingsToUi();
     }
 
@@ -741,8 +742,13 @@ public partial class Form1 : Form
                     table.ZAxis.Format);
                 LoadMapIntoGrid(table, values);
                 LoadVisualizationViews(table, values);
-                tabControlView.SelectedIndex = GetDefaultTableViewIndex();
-                tabControlView.Visible  = true;
+
+                if (!tabControlView.Visible)
+                {
+                    tabControlView.SelectedIndex = GetDefaultTableViewIndex();
+                    tabControlView.Visible = true;
+                }
+
                 panelConstantValue.Visible = false;
                 lblNoBin.Visible        = false;
                 statusDimensions.Text = $"{table.ZAxis.RowCount}\u00D7{table.ZAxis.ColCount}";
@@ -952,6 +958,42 @@ public partial class Form1 : Form
             _editHistory.Record(edit);
 
         HandleTableDataChanged(_selectedTable);
+    }
+
+    private void DgvMap_MultiCellEditing(object? sender, MultiCellEditingEventArgs e)
+    {
+        if (_bin == null || _selectedTable == null || _document == null) return;
+
+        if (e.Apply)
+        {
+            // Apply all at once
+            bool anyChanged = false;
+            foreach (DataGridViewCell cell in dgvMap.SelectedCells)
+            {
+                if (TableEditorSupport.TryWriteTableCellValue(
+                        _document, _bin, _selectedTable,
+                        cell.RowIndex, cell.ColumnIndex, e.Text,
+                        out BinCellEdit? edit, out _))
+                {
+                    if (edit.HasValue) _editHistory.Record(edit.Value);
+                    anyChanged = true;
+                }
+            }
+            if (anyChanged) HandleTableDataChanged(_selectedTable);
+        }
+        else if (e.Text != null)
+        {
+            // Real-time visual preview (internal grid values only)
+            foreach (DataGridViewCell cell in dgvMap.SelectedCells)
+            {
+                cell.Value = e.Text;
+            }
+        }
+        else
+        {
+            // Cancel - refresh to original values
+            RefreshDetailPanel();
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -1470,7 +1512,24 @@ public partial class Form1 : Form
     private bool TryUndoBinEdit()
     {
         if (!_editHistory.TryUndo(_bin, out BinCellEdit edit))
+        {
+            // No undo history — reload from disk to reset to default
+            if (_bin != null && _binPath != null && File.Exists(_binPath))
+            {
+                try
+                {
+                    _bin = BinBuffer.Load(_binPath);
+                    UpdateTitleBar();
+                    if (_selectedTable != null || _selectedConstant != null)
+                        RefreshDetailPanel();
+                    RefreshOpenTableEditorWindows();
+                    SetStatus($"Reset to loaded file: {Path.GetFileName(_binPath)}");
+                    return true;
+                }
+                catch { }
+            }
             return false;
+        }
 
         UpdateTitleBar();
         if (_selectedTable != null || _selectedConstant != null)
