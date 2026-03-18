@@ -298,12 +298,23 @@ public partial class Form1 : Form
         else if (selectedTag is XdfObject) ClearDetailPanel();
     }
 
+    private static string[] SplitSearchTerms(string searchText)
+    {
+        return string.IsNullOrWhiteSpace(searchText)
+            ? Array.Empty<string>()
+            : searchText.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
     private static bool TableMatchesSearch(XdfTable table, string searchText)
     {
-        if (string.IsNullOrWhiteSpace(searchText)) return true;
+        return TableMatchesSearch(table, SplitSearchTerms(searchText));
+    }
 
-        string[] terms = searchText.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        foreach (string term in terms)
+    private static bool TableMatchesSearch(XdfTable table, IReadOnlyList<string> searchTerms)
+    {
+        if (searchTerms.Count == 0) return true;
+
+        foreach (string term in searchTerms)
         {
             bool titleMatch = table.Title.Contains(term, StringComparison.OrdinalIgnoreCase);
             bool descriptionMatch = table.Description?.Contains(term, StringComparison.OrdinalIgnoreCase) == true;
@@ -314,11 +325,18 @@ public partial class Form1 : Form
         return true;
     }
 
+    private static bool ConstantMatchesSearch(XdfConstant constant, string searchText)
+    {
+        return constant.Title.Contains(searchText, StringComparison.OrdinalIgnoreCase) ||
+               (constant.Description?.Contains(searchText, StringComparison.OrdinalIgnoreCase) == true);
+    }
+
     private IReadOnlyList<XdfTable> FindMatchingTables(string searchText)
     {
         if (_document == null) return Array.Empty<XdfTable>();
-        if (string.IsNullOrWhiteSpace(searchText)) return Array.Empty<XdfTable>();
-        return _document.Tables.Where(table => TableMatchesSearch(table, searchText)).ToList();
+        string[] searchTerms = SplitSearchTerms(searchText);
+        if (searchTerms.Length == 0) return Array.Empty<XdfTable>();
+        return _document.Tables.Where(table => TableMatchesSearch(table, searchTerms)).ToList();
     }
 
     private void OpenTableSearchWindow()
@@ -506,9 +524,20 @@ public partial class Form1 : Form
 
     private void TreeView_AfterSelect(object? sender, TreeViewEventArgs e)
     {
-        if (e.Node?.Tag is XdfTable table)       ShowTableDetail(table);
-        else if (e.Node?.Tag is XdfConstant con) ShowConstantDetail(con);
-        else                                     ClearDetailPanel();
+        if (e.Node?.Tag is XdfTable table)
+        {
+            if (ReferenceEquals(_selectedTable, table) && _selectedConstant == null) return;
+            ShowTableDetail(table);
+        }
+        else if (e.Node?.Tag is XdfConstant con)
+        {
+            if (ReferenceEquals(_selectedConstant, con) && _selectedTable == null) return;
+            ShowConstantDetail(con);
+        }
+        else
+        {
+            ClearDetailPanel();
+        }
     }
 
     private void RefreshDetailPanel()
@@ -1041,11 +1070,19 @@ public partial class Form1 : Form
         if (_document == null) return;
 
         string search = searchBox.Text.Trim();
-        if (string.IsNullOrEmpty(search))
+        if (search.Length < 2)
         {
             RefreshTree();
             return;
         }
+
+        ApplyTreeSearchFilter(search);
+    }
+
+    private void ApplyTreeSearchFilter(string search)
+    {
+        if (_document == null)
+            return;
 
         object? selectedTag = treeView.SelectedNode?.Tag;
         TreeNode? selectedNode = null;
@@ -1081,10 +1118,18 @@ public partial class Form1 : Form
                 selectedNode = node;
         }
 
-        if (tablesNode.Nodes.Count > 0) treeView.Nodes.Add(tablesNode);
-        if (constantsNode.Nodes.Count > 0) treeView.Nodes.Add(constantsNode);
+        if (tablesNode.Nodes.Count > 0)
+        {
+            treeView.Nodes.Add(tablesNode);
+            tablesNode.Expand();
+        }
 
-        treeView.ExpandAll();
+        if (constantsNode.Nodes.Count > 0)
+        {
+            treeView.Nodes.Add(constantsNode);
+            constantsNode.Expand();
+        }
+
         treeView.EndUpdate();
 
         if (selectedNode != null) treeView.SelectedNode = selectedNode;
